@@ -208,8 +208,9 @@ func (s *Substrings) String() string {
 }
 
 type tokenizer struct {
-	s   string
-	pos int
+	s    string
+	pos  int // byte position
+	cpos int // character position
 }
 
 func (t *tokenizer) next() rune {
@@ -218,6 +219,7 @@ func (t *tokenizer) next() rune {
 	}
 	r, size := utf8.DecodeRuneInString(t.s[t.pos:])
 	t.pos += size
+	t.cpos++
 	return r
 }
 
@@ -261,13 +263,13 @@ func parseFilter(tok *tokenizer, checkClose bool) (Filter, error) {
 		tok.pos--
 		return nil, nil
 	} else if r != '(' {
-		return nil, &ErrFilterSyntaxError{Pos: tok.pos - 1, Msg: "expected ("}
+		return nil, &ErrFilterSyntaxError{Pos: tok.cpos - 1, Msg: "expected ("}
 	}
 	var filter Filter
 	r = tok.next()
 	switch r {
 	case 0, utf8.RuneError:
-		return nil, &ErrFilterSyntaxError{Pos: tok.pos, Msg: "unxpected end of filter"}
+		return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "unxpected end of filter"}
 	case '&', '|':
 		var filters []Filter
 		for {
@@ -299,25 +301,25 @@ func parseFilter(tok *tokenizer, checkClose bool) (Filter, error) {
 			r = tok.next()
 			switch r {
 			case 0, utf8.RuneError:
-				return nil, &ErrFilterSyntaxError{Pos: tok.pos, Msg: "unxpected end of filter"}
+				return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "unxpected end of filter"}
 			case '=':
 				op = "="
 			case '>', '<', '~':
 				op = string(r) + "="
 				if r2 := tok.next(); r2 != '=' {
-					return nil, &ErrFilterSyntaxError{Pos: tok.pos - 1, Msg: "expected = after " + string(r)}
+					return nil, &ErrFilterSyntaxError{Pos: tok.cpos - 1, Msg: "expected = after " + string(r)}
 				}
 			case '\\':
 				// hex code
 				r1 := tok.next()
 				r2 := tok.next()
 				if r1 == 0 || r2 == 0 || r1 == utf8.RuneError || r2 == utf8.RuneError {
-					return nil, &ErrFilterSyntaxError{Pos: tok.pos, Msg: "unxpected end of filter"}
+					return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "unxpected end of filter"}
 				}
 				h := string(r1) + string(r2)
 				n, err := strconv.ParseInt(h, 16, 8)
 				if err != nil {
-					return nil, &ErrFilterSyntaxError{Pos: tok.pos - 2, Msg: "unable to parse hex code: " + err.Error()}
+					return nil, &ErrFilterSyntaxError{Pos: tok.cpos - 2, Msg: "unable to parse hex code: " + err.Error()}
 				}
 				name = append(name, rune(n))
 			default:
@@ -334,7 +336,7 @@ func parseFilter(tok *tokenizer, checkClose bool) (Filter, error) {
 			}
 			switch r {
 			case 0, utf8.RuneError:
-				return nil, &ErrFilterSyntaxError{Pos: tok.pos, Msg: "unxpected end of filter"}
+				return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "unxpected end of filter"}
 			case ')':
 				tok.pos--
 				break valueLoop
@@ -343,12 +345,12 @@ func parseFilter(tok *tokenizer, checkClose bool) (Filter, error) {
 				r1 := tok.next()
 				r2 := tok.next()
 				if r1 == 0 || r2 == 0 || r1 == utf8.RuneError || r2 == utf8.RuneError {
-					return nil, &ErrFilterSyntaxError{Pos: tok.pos, Msg: "unxpected end of filter"}
+					return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "unxpected end of filter"}
 				}
 				h := string(r1) + string(r2)
 				n, err := strconv.ParseInt(h, 16, 8)
 				if err != nil {
-					return nil, &ErrFilterSyntaxError{Pos: tok.pos - 2, Msg: "unable to parse hex code: " + err.Error()}
+					return nil, &ErrFilterSyntaxError{Pos: tok.cpos - 2, Msg: "unable to parse hex code: " + err.Error()}
 				}
 				value = append(value, rune(n))
 			default:
@@ -359,12 +361,12 @@ func parseFilter(tok *tokenizer, checkClose bool) (Filter, error) {
 		valueS := string(value)
 		if valueS == "*" {
 			if op != "=" {
-				return nil, &ErrFilterSyntaxError{Pos: tok.pos, Msg: "* value for non = op"}
+				return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "* value for non = op"}
 			}
 			filter = &Present{Attribute: nameS}
 		} else if hasStar {
 			if op != "=" {
-				return nil, &ErrFilterSyntaxError{Pos: tok.pos, Msg: "non equality substring match not allowed"}
+				return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "non equality substring match not allowed"}
 			}
 			// substring match
 			parts := strings.Split(valueS, "*")
@@ -388,7 +390,7 @@ func parseFilter(tok *tokenizer, checkClose bool) (Filter, error) {
 		}
 	}
 	if r := tok.next(); r != ')' {
-		return nil, &ErrFilterSyntaxError{Pos: tok.pos - 1, Msg: "expected )"}
+		return nil, &ErrFilterSyntaxError{Pos: tok.cpos - 1, Msg: "expected )"}
 	}
 	return filter, nil
 }

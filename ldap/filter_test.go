@@ -26,7 +26,7 @@ func TestParseFilter(t *testing.T) {
 	}
 }
 
-func TestFilterParsing(t *testing.T) {
+func TestFilterEncoding(t *testing.T) {
 	cases := []Filter{
 		&Present{
 			Attribute: "attr",

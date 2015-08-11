@@ -9,17 +9,23 @@ import (
 
 const protocolVersion = 3
 
+// Controls
 const (
-	// Controls
 	OIDContentSynchControl              = "1.3.6.1.4.1.4203.1.9.1.1" // https://tools.ietf.org/html/rfc4533
 	OIDProxiedAuthControl               = "2.16.840.1.113730.3.4.18" // https://tools.ietf.org/html/rfc4370
 	OIDNamedSubordinateReferenceControl = "2.16.840.1.113730.3.4.2"  // https://tools.ietf.org/html/rfc3296
-	// Extensions
+)
+
+// Extensions
+const (
 	OIDCancel         = "1.3.6.1.1.8"             // https://tools.ietf.org/html/rfc3909
 	OIDStartTLS       = "1.3.6.1.4.1.1466.20037"  // http://www.iana.org/go/rfc4511 - http://www.iana.org/go/rfc4513
 	OIDPasswordModify = "1.3.6.1.4.1.4203.1.11.1" // http://www.iana.org/go/rfc3062
 	OIDWhoami         = "1.3.6.1.4.1.4203.1.11.3" // http://www.iana.org/go/rfc4532
-	// Features
+)
+
+// Features
+const (
 	OIDModifyIncrement          = "1.3.6.1.1.14"           // http://www.iana.org/go/rfc4525
 	OIDAllOperationalAttributes = "1.3.6.1.4.1.4203.1.5.1" // https://www.rfc-editor.org/rfc/rfc3673.txt
 	OIDAttributesByObjectClass  = "1.3.6.1.4.1.4203.1.5.2" // https://tools.ietf.org/html/rfc4529
