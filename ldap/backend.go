@@ -5,8 +5,11 @@ import (
 	"net"
 )
 
+// Context is passed created by and passed back to a server backend to provide
+// state for a client connection.
 type Context interface{}
 
+// Backend is implemented by an LDAP database to provide the backing store
 type Backend interface {
 	Add(Context, *AddRequest) (*AddResponse, error)
 	Bind(Context, *BindRequest) (*BindResponse, error)
@@ -23,6 +26,7 @@ type Backend interface {
 
 type debugBackend struct{}
 
+// DebugBackend is an implementation of a server backend that prints out requests
 var DebugBackend = debugBackend{}
 
 func (debugBackend) Add(ctx Context, req *AddRequest) (*AddResponse, error) {

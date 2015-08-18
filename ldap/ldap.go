@@ -21,7 +21,7 @@ const (
 	OIDCancel         = "1.3.6.1.1.8"             // https://tools.ietf.org/html/rfc3909
 	OIDStartTLS       = "1.3.6.1.4.1.1466.20037"  // http://www.iana.org/go/rfc4511 - http://www.iana.org/go/rfc4513
 	OIDPasswordModify = "1.3.6.1.4.1.4203.1.11.1" // http://www.iana.org/go/rfc3062
-	OIDWhoami         = "1.3.6.1.4.1.4203.1.11.3" // http://www.iana.org/go/rfc4532
+	OIDWhoAmI         = "1.3.6.1.4.1.4203.1.11.3" // http://www.iana.org/go/rfc4532
 )
 
 // Features
@@ -43,7 +43,7 @@ var RootDSE = map[string][]string{
 		OIDAllOperationalAttributes,
 	},
 	"supportedExtension": []string{
-		OIDWhoami,
+		OIDWhoAmI,
 		OIDPasswordModify,
 	},
 	"supportedSASLMechanisms": []string{},

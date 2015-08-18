@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 )
 
+// ErrAlreadyTLS is returned when trying to start a TLS connection when the connection is already using TLS
 var ErrAlreadyTLS = errors.New("ldap: connection already using TLS")
 
 func NewRequestPacket(msgID int) *Packet {
@@ -38,27 +39,36 @@ type cliReq struct {
 }
 
 type Client struct {
-	msgID uint32
-	cn    net.Conn
-	wr    *bufio.Writer
-	isTLS bool
-	mu    sync.Mutex
-	rq    chan cliReq
-	rmap  map[int]chan packetError
+	msgID          uint32
+	cn             net.Conn
+	wr             *bufio.Writer
+	isTLS          bool
+	mu             sync.Mutex
+	rq             chan cliReq
+	rmap           map[int]chan packetError
+	waitNextRecvCh chan chan struct{}
+	waitNextSendCh chan chan struct{}
 }
 
+// NewClient returns a new initialized client using the provided existing connection.
+// The provided connection should be considered owned by the Client and not used after
+// this call.
 func NewClient(cn net.Conn, isTLS bool) *Client {
 	c := &Client{
-		cn:    cn,
-		wr:    bufio.NewWriter(cn),
-		msgID: 1,
-		rq:    make(chan cliReq),
-		rmap:  make(map[int]chan packetError),
+		cn:             cn,
+		wr:             bufio.NewWriter(cn),
+		msgID:          1,
+		rq:             make(chan cliReq),
+		rmap:           make(map[int]chan packetError),
+		isTLS:          isTLS,
+		waitNextRecvCh: make(chan chan struct{}, 1),
+		waitNextSendCh: make(chan chan struct{}, 1),
 	}
 	c.start()
 	return c
 }
 
+// Dial connects to a server that is not using TLS.
 func Dial(network, address string) (*Client, error) {
 	cn, err := net.Dial(network, address)
 	if err != nil {
@@ -67,6 +77,7 @@ func Dial(network, address string) (*Client, error) {
 	return NewClient(cn, false), nil
 }
 
+// DialTLS connects to a server that is using TLS.
 func DialTLS(network, address string, config *tls.Config) (*Client, error) {
 	cn, err := tls.Dial(network, address, config)
 	if err != nil {
@@ -106,9 +117,15 @@ func (c *Client) start() {
 			} else {
 				ch <- packetError{msgID: msgID, pkt: pkt.Items[1]}
 			}
+
+			select {
+			case ch := <-c.waitNextRecvCh:
+				<-ch
+			default:
+			}
 		}
 		if e != nil {
-			log.Printf(e.Error())
+			log.Printf("ldap: error on receive: %s", e)
 		}
 	}()
 	// Send loop
@@ -133,6 +150,12 @@ func (c *Client) start() {
 			c.mu.Lock()
 			c.rmap[rq.i] = rq.c
 			c.mu.Unlock()
+
+			select {
+			case ch := <-c.waitNextSendCh:
+				<-ch
+			default:
+			}
 		}
 	}()
 }
@@ -154,6 +177,7 @@ func (c *Client) request(req Request) (*Packet, error) {
 	return r.pkt, r.err
 }
 
+// Close closes the underlying connection to the server
 func (c *Client) Close() error {
 	return c.cn.Close()
 }
@@ -164,14 +188,44 @@ func (c *Client) finishMessage(msgID int) {
 	c.mu.Unlock()
 }
 
-// func (c *Client) StartTLS(config *tls.Config) error {
-// 	if c.isTLS {
-// 		return ErrAlreadyTLS
-// 	}
-// 	// TODO
-// 	return errors.New("ldap: StartTLS not yet supported")
-// }
+// StartTLS requests a TLS connection from the server. It must not be
+// called concurrently with other requests.
+func (c *Client) StartTLS(config *tls.Config) error {
+	if c.isTLS {
+		return ErrAlreadyTLS
+	}
+	// Tell send and recv loop to stop after the next packet
+	chS := make(chan struct{})
+	c.waitNextSendCh <- chS
+	chR := make(chan struct{})
+	c.waitNextRecvCh <- chR
+	defer func() {
+		chS <- struct{}{}
+		chR <- struct{}{}
+	}()
+	pkt, err := c.request(&ExtendedRequest{
+		Name: OIDStartTLS,
+	})
+	if err != nil {
+		return err
+	}
+	res, err := parseExtendedResponse(pkt)
+	if err != nil {
+		return err
+	}
+	if err := res.BaseResponse.Err(); err != nil {
+		return err
+	}
+	tlsCn := tls.Client(c.cn, config)
+	if err := tlsCn.Handshake(); err != nil {
+		return err
+	}
+	c.cn = tlsCn
+	c.wr.Reset(c.cn)
+	return nil
+}
 
+// Bind authenticates using the provided dn and password.
 func (c *Client) Bind(dn string, pass []byte) error {
 	pkt, err := c.request(&BindRequest{
 		DN:       dn,
@@ -187,6 +241,7 @@ func (c *Client) Bind(dn string, pass []byte) error {
 	return res.BaseResponse.Err()
 }
 
+// Delete a node
 func (c *Client) Delete(dn string) error {
 	pkt, err := c.request(&DeleteRequest{
 		DN: dn,
@@ -201,6 +256,7 @@ func (c *Client) Delete(dn string) error {
 	return res.BaseResponse.Err()
 }
 
+// Search performs a search query against the LDAP database.
 func (c *Client) Search(req *SearchRequest) ([]*SearchResult, error) {
 	id := c.newID()
 	ch := make(chan packetError, 1)
@@ -239,7 +295,24 @@ func (c *Client) Search(req *SearchRequest) ([]*SearchResult, error) {
 	}
 }
 
-// func (c *Client) Unbind() error {
-// 	// TODO
-// 	return c.Close()
-// }
+// WhoAmI returns the authzId for the authenticated user on the connection.
+// https://tools.ietf.org/html/rfc4532
+func (c *Client) WhoAmI() (string, error) {
+	pkt, err := c.request(&ExtendedRequest{
+		Name: OIDWhoAmI,
+	})
+	if err != nil {
+		return "", err
+	}
+	res, err := parseExtendedResponse(pkt)
+	if err != nil {
+		return "", err
+	}
+	if err := res.BaseResponse.Err(); err != nil {
+		return "", err
+	}
+	if len(res.Value) == 0 {
+		return "anonymous", nil
+	}
+	return string(res.Value), nil
+}

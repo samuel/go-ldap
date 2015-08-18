@@ -348,7 +348,7 @@ func (cli *srvClient) processRequest(msgID int, pkt *Packet) error {
 			res = &ExtendedResponse{
 				Value: b,
 			}
-		case OIDWhoami:
+		case OIDWhoAmI:
 			v, err := cli.srv.Backend.Whoami(cli.ctx)
 			if err != nil {
 				return err

@@ -26,6 +26,44 @@ func (r *ExtendedResponse) WritePackets(w io.Writer, msgID int) error {
 	return res.Write(w)
 }
 
+func (r *ExtendedRequest) WritePackets(w io.Writer, msgID int) error {
+	pkt := NewPacket(ClassApplication, false, ApplicationExtendedRequest, nil)
+	if r.Name != "" {
+		pkt.AddItem(NewPacket(ClassContext, true, 0, r.Name))
+	}
+	if r.Value != nil {
+		pkt.AddItem(NewPacket(ClassContext, true, 1, r.Value))
+	}
+	req := NewRequestPacket(msgID)
+	req.AddItem(pkt)
+	return req.Write(w)
+}
+
+func parseExtendedResponse(pkt *Packet) (*ExtendedResponse, error) {
+	res := &ExtendedResponse{}
+	if err := parseBaseResponse(pkt, &res.BaseResponse); err != nil {
+		return nil, err
+	}
+	var ok bool
+	for _, it := range pkt.Items[3:] {
+		switch it.Tag {
+		case 10:
+			res.Name, ok = it.Str()
+			if !ok {
+				return nil, ErrProtocolError("invalid extended response oid")
+			}
+		case 11:
+			res.Value, ok = it.Bytes()
+			if !ok {
+				return nil, ErrProtocolError("invalid extended response value")
+			}
+		default:
+			return nil, ErrProtocolError("unsupported extended response tag")
+		}
+	}
+	return res, nil
+}
+
 func parseExtendedRequest(pkt *Packet) (*ExtendedRequest, error) {
 	var ok bool
 	req := &ExtendedRequest{}
@@ -55,6 +93,10 @@ type PasswordModifyRequest struct {
 	UserIdentity string
 	OldPassword  []byte
 	NewPassword  []byte
+}
+
+type PasswordModifyResponse struct {
+	GenPassword []byte // [0] OCTET STRING OPTIONAL
 }
 
 func parsePasswordModifyRequest(pkt *Packet) (*PasswordModifyRequest, error) {

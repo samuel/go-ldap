@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-const MaxPacketSize = 32 << 20 // 32 MB
+const maxPacketSize = 32 << 20 // 32 MB
 
 type ErrInvalidBEREncoding string
 
@@ -143,7 +143,7 @@ func ReadPacket(rd io.Reader) (*Packet, int, error) {
 		for i := 2; i < 2+nl; i++ {
 			dataLen = (dataLen << 8) | int(buf[i])
 		}
-		if dataLen > MaxPacketSize {
+		if dataLen > maxPacketSize {
 			return nil, 2 + nl, ErrInvalidBEREncoding("ldap: packet larger than max allowed size")
 		}
 	}
@@ -184,7 +184,7 @@ func ParsePacket(buf []byte) (*Packet, int, error) {
 		for i := 2; i < 2+n; i++ {
 			dataLen = (dataLen << 8) | int(buf[i])
 		}
-		if dataLen > MaxPacketSize {
+		if dataLen > maxPacketSize {
 			return nil, hdr, ErrInvalidBEREncoding("ldap: packet larger than max allowed size")
 		}
 	}
@@ -205,7 +205,7 @@ func ParsePacket(buf []byte) (*Packet, int, error) {
 			var err error
 			pkt.Value, err = parseValue(pkt.Tag, data)
 			if err != nil {
-				return nil, hdr + dataLen, nil
+				return nil, hdr + dataLen, err
 			}
 		} else {
 			pkt.Value = data
@@ -326,8 +326,8 @@ func (p *Packet) write(w io.Writer, b []byte) error {
 	if err != nil {
 		return err
 	}
-	if total > MaxPacketSize {
-		return fmt.Errorf("ldap: packet larger than max size (%d > %d)", total, MaxPacketSize)
+	if total > maxPacketSize {
+		return fmt.Errorf("ldap: packet larger than max size (%d > %d)", total, maxPacketSize)
 	}
 	pri := byte(0x20)
 	if p.Primitive {
