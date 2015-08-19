@@ -295,6 +295,23 @@ func (c *Client) Search(req *SearchRequest) ([]*SearchResult, error) {
 	}
 }
 
+// Modify operation allows a client to request that a modification
+// of an entry be performed on its behalf by a server.
+func (c *Client) Modify(dn string, mods []*Mod) error {
+	pkt, err := c.request(&ModifyRequest{
+		DN:   dn,
+		Mods: mods,
+	})
+	if err != nil {
+		return err
+	}
+	var res ModifyResponse
+	if err := parseBaseResponse(pkt, &res.BaseResponse); err != nil {
+		return err
+	}
+	return res.BaseResponse.Err()
+}
+
 // WhoAmI returns the authzId for the authenticated user on the connection.
 // https://tools.ietf.org/html/rfc4532
 func (c *Client) WhoAmI() (string, error) {

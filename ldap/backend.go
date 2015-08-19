@@ -27,7 +27,7 @@ type Backend interface {
 type debugBackend struct{}
 
 // DebugBackend is an implementation of a server backend that prints out requests
-var DebugBackend = debugBackend{}
+var DebugBackend Backend = debugBackend{}
 
 func (debugBackend) Add(ctx Context, req *AddRequest) (*AddResponse, error) {
 	fmt.Printf("ADD %+v\n", req)
@@ -63,7 +63,13 @@ func (debugBackend) ExtendedRequest(ctx Context, req *ExtendedRequest) (*Extende
 }
 
 func (debugBackend) Modify(ctx Context, req *ModifyRequest) (*ModifyResponse, error) {
-	fmt.Printf("MODIFY %+v\n", req)
+	fmt.Printf("MODIFY dn=%s\n", req.DN)
+	for _, m := range req.Mods {
+		fmt.Printf("\t%s %s\n", m.Type, m.Name)
+		for _, v := range m.Values {
+			fmt.Printf("\t\t%s\n", string(v))
+		}
+	}
 	return &ModifyResponse{}, nil
 }
 
