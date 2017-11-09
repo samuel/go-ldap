@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 )
 
 func NewResponsePacket(msgID int) *Packet {
@@ -80,6 +81,10 @@ type Server struct {
 	RootDSE map[string][]string
 
 	tlsConfig *tls.Config
+	mu        sync.Mutex
+	listeners []net.Listener
+	stopC     chan struct{}
+	factory   listenerFactory
 }
 
 type srvClient struct {
@@ -87,6 +92,20 @@ type srvClient struct {
 	wr  *bufio.Writer
 	srv *Server
 	ctx Context
+}
+
+type listenerFactory interface {
+	newListener(network, address string) (net.Listener, error)
+	newTLSListener(network, addr string, config *tls.Config) (net.Listener, error)
+}
+
+type listenerFactoryImpl struct{}
+
+func (_ *listenerFactoryImpl) newListener(network, address string) (net.Listener, error) {
+	return net.Listen(network, address)
+}
+func (_ *listenerFactoryImpl) newTLSListener(network, addr string, config *tls.Config) (net.Listener, error) {
+	return tls.Listen(network, addr, config)
 }
 
 func NewServer(be Backend, tlsConfig *tls.Config) (*Server, error) {
@@ -106,7 +125,24 @@ func NewServer(be Backend, tlsConfig *tls.Config) (*Server, error) {
 		Backend:   be,
 		RootDSE:   sf,
 		tlsConfig: tlsConfig,
+		factory:   &listenerFactoryImpl{},
+		stopC:     make(chan struct{}),
 	}, nil
+}
+
+func (srv *Server) Shutdown() error {
+	var err error
+
+	close(srv.stopC)
+	srv.mu.Lock()
+	for _, listener := range srv.listeners {
+		if e := listener.Close(); err != nil {
+			err = e
+		}
+	}
+	srv.mu.Unlock()
+
+	return err
 }
 
 func (srv *Server) ServeTLS(network, addr string, tlsConfig *tls.Config) error {
@@ -116,7 +152,7 @@ func (srv *Server) ServeTLS(network, addr string, tlsConfig *tls.Config) error {
 	if tlsConfig == nil {
 		return errors.New("ldap: no TLS config")
 	}
-	ln, err := tls.Listen(network, addr, tlsConfig)
+	ln, err := srv.factory.newTLSListener(network, addr, tlsConfig)
 	if err != nil {
 		return err
 	}
@@ -124,7 +160,7 @@ func (srv *Server) ServeTLS(network, addr string, tlsConfig *tls.Config) error {
 }
 
 func (srv *Server) Serve(network, addr string) error {
-	ln, err := net.Listen(network, addr)
+	ln, err := srv.factory.newListener(network, addr)
 	if err != nil {
 		return err
 	}
@@ -132,7 +168,23 @@ func (srv *Server) Serve(network, addr string) error {
 }
 
 func (srv *Server) serve(ln net.Listener) error {
+	select {
+	case <-srv.stopC:
+		return errors.New("unable to serve because server is allready stopped")
+	default:
+		srv.mu.Lock()
+		srv.listeners = append(srv.listeners, ln)
+		srv.mu.Unlock()
+	}
+
 	for {
+		select {
+		case <-srv.stopC:
+			return nil
+		default:
+			// do nothing
+		}
+
 		cn, err := ln.Accept()
 		if err != nil {
 			log.Printf("Accept failed: %+v", err)
