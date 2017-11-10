@@ -86,7 +86,7 @@ type Server struct {
 	mu        sync.Mutex
 	once      sync.Once
 	listeners []net.Listener
-	isStopped int32
+	isStopped bool
 	factory   listenerFactory
 }
 
@@ -169,7 +169,7 @@ func (srv *Server) Shutdown() error {
 	var err error
 
 	srv.mu.Lock()
-	atomic.StoreInt32(&srv.isStopped, 1)
+	srv.isStopped = true
 	for _, listener := range srv.listeners {
 		if e := listener.Close(); e != nil {
 			err = e
@@ -206,7 +206,7 @@ func (srv *Server) Serve(network, addr string) error {
 
 func (srv *Server) serve(ln net.Listener) error {
 	srv.mu.Lock()
-	if atomic.LoadInt32(&srv.isStopped) > 0 {
+	if srv.isStopped {
 		srv.mu.Unlock()
 		return nil
 	}
