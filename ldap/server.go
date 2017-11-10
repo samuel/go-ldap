@@ -92,7 +92,8 @@ type Server struct {
 
 // waitGroup - kind of a std WaitGroup
 // we can't use std WaitGroup here to keep original Server API
-// std WaitGroup doesn't allow to call Add before Wait
+// std WaitGroup doesn't allow to call Wait before Add
+// but technically we can call Shutdown before Serve
 type waitGroup struct {
 	cond    *sync.Cond
 	counter int32
@@ -171,7 +172,7 @@ func (srv *Server) Shutdown() error {
 	close(srv.stopC)
 	srv.mu.Lock()
 	for _, listener := range srv.listeners {
-		if e := listener.Close(); err != nil {
+		if e := listener.Close(); e != nil {
 			err = e
 		}
 	}
