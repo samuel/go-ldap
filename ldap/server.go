@@ -92,6 +92,7 @@ type Server struct {
 
 // waitGroup - kind of a std WaitGroup
 // we can't use std WaitGroup here to keep original Server API
+// std WaitGroup doesn't allow to call Add before Wait
 type waitGroup struct {
 	cond    *sync.Cond
 	counter int32
@@ -121,6 +122,7 @@ func (w *waitGroup) wait() {
 
 type srvClient struct {
 	cn  net.Conn
+	wg  *waitGroup
 	wr  *bufio.Writer
 	srv *Server
 	ctx Context
@@ -212,9 +214,6 @@ func (srv *Server) serve(ln net.Listener) error {
 		srv.mu.Unlock()
 	}
 
-	srv.wg.add()
-	defer srv.wg.done()
-
 	for {
 		select {
 		case <-srv.stopC:
@@ -231,6 +230,7 @@ func (srv *Server) serve(ln net.Listener) error {
 
 		go (&srvClient{
 			cn:  cn,
+			wg:  srv.wg,
 			wr:  bufio.NewWriter(cn),
 			srv: srv,
 		}).serve()
@@ -238,6 +238,9 @@ func (srv *Server) serve(ln net.Listener) error {
 }
 
 func (cli *srvClient) serve() {
+	cli.wg.add()
+	defer cli.wg.done()
+
 	ctx, err := cli.srv.Backend.Connect(cli.cn.RemoteAddr())
 	if err != nil {
 		cli.cn.Close()

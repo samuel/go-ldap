@@ -77,21 +77,36 @@ func TestServer_Shutdown(t *testing.T) {
 	assert.NoError(t, server.Shutdown())
 	assert.NoError(t, server.Serve("", ""))
 
+	var (
+		readyC = make(chan struct{})
+		stuck  bool
+	)
+
 	// shutdown while serving
 	server = &Server{factory: &listenerFactoryMock{}, stopC: make(chan struct{}), wg: newWaitGroup()}
-	n := 1000
+	n := 10
 	for i := 0; i < n; i++ {
 		go func() {
 			assert.NoError(t, server.Serve("", ""))
 		}()
 	}
 
-	time.AfterFunc(2*time.Second, func() {
-		assert.Equal(t, int32(n), atomic.LoadInt32(&server.wg.counter))
+	time.AfterFunc(1*time.Second, func() {
 		server.Shutdown()
-		assert.Equal(t, int32(0), atomic.LoadInt32(&server.wg.counter))
-
+		close(readyC)
 	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	select {
+	case <-ctx.Done():
+		stuck = true
+	case <-readyC:
+		// ok
+	}
+
+	assert.False(t, stuck)
 }
 
 // listenerFactoryMock - listener factory mock for unit testing
