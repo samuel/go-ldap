@@ -86,7 +86,7 @@ type Server struct {
 	mu        sync.Mutex
 	once      sync.Once
 	listeners []net.Listener
-	stopC     chan struct{}
+	isStopped int32
 	factory   listenerFactory
 }
 
@@ -161,7 +161,6 @@ func NewServer(be Backend, tlsConfig *tls.Config) (*Server, error) {
 		RootDSE:   sf,
 		tlsConfig: tlsConfig,
 		factory:   &listenerFactoryImpl{},
-		stopC:     make(chan struct{}),
 		wg:        newWaitGroup(),
 	}, nil
 }
@@ -169,8 +168,8 @@ func NewServer(be Backend, tlsConfig *tls.Config) (*Server, error) {
 func (srv *Server) Shutdown() error {
 	var err error
 
-	close(srv.stopC)
 	srv.mu.Lock()
+	atomic.StoreInt32(&srv.isStopped, 1)
 	for _, listener := range srv.listeners {
 		if e := listener.Close(); e != nil {
 			err = e
@@ -206,27 +205,21 @@ func (srv *Server) Serve(network, addr string) error {
 }
 
 func (srv *Server) serve(ln net.Listener) error {
-	select {
-	case <-srv.stopC:
-		return nil
-	default:
-		srv.mu.Lock()
-		srv.listeners = append(srv.listeners, ln)
+	srv.mu.Lock()
+	if atomic.LoadInt32(&srv.isStopped) > 0 {
 		srv.mu.Unlock()
+		return nil
 	}
+	srv.listeners = append(srv.listeners, ln)
+	srv.mu.Unlock()
 
 	for {
-		select {
-		case <-srv.stopC:
-			return nil
-		default:
-			// do nothing
-		}
-
 		cn, err := ln.Accept()
-		if err != nil {
+		if err != nil && isTemporary(err) {
 			log.Printf("Accept failed: %+v", err)
 			continue
+		} else {
+			return err
 		}
 
 		go (&srvClient{
@@ -236,6 +229,13 @@ func (srv *Server) serve(ln net.Listener) error {
 			srv: srv,
 		}).serve()
 	}
+}
+
+func isTemporary(err error) bool {
+	if ne, ok := err.(net.Error); ok {
+		return ne.Temporary()
+	}
+	return false
 }
 
 func (cli *srvClient) serve() {

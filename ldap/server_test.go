@@ -73,7 +73,7 @@ func TestWaitGroup_AddDone(t *testing.T) {
 
 func TestServer_Shutdown(t *testing.T) {
 	// try to start with closed listener
-	server := &Server{factory: &listenerFactoryMock{}, stopC: make(chan struct{}), wg: newWaitGroup()}
+	server := &Server{factory: &listenerFactoryMock{}, wg: newWaitGroup()}
 	assert.NoError(t, server.Shutdown())
 	assert.NoError(t, server.Serve("", ""))
 
@@ -83,7 +83,7 @@ func TestServer_Shutdown(t *testing.T) {
 	)
 
 	// shutdown while serving
-	server = &Server{factory: &listenerFactoryMock{}, stopC: make(chan struct{}), wg: newWaitGroup()}
+	server = &Server{factory: &listenerFactoryMock{}, wg: newWaitGroup()}
 	n := 10
 	for i := 0; i < n; i++ {
 		go func() {
@@ -137,7 +137,7 @@ func newListenerMock() *listenerMock {
 
 func (l *listenerMock) Accept() (net.Conn, error) {
 	<-l.stopC
-	return nil, errors.New("listener is closed")
+	return nil, &netErrorMock{errors.New("listener is closed")}
 }
 
 func (l *listenerMock) Close() error {
@@ -147,4 +147,17 @@ func (l *listenerMock) Close() error {
 
 func (l *listenerMock) Addr() net.Addr {
 	return nil
+}
+
+// netErrorMock - net.Error impl for unit testing
+type netErrorMock struct {
+	error
+}
+
+func (_ *netErrorMock) Temporary() bool {
+	return true
+}
+
+func (_ *netErrorMock) Timeout() bool {
+	return true
 }
