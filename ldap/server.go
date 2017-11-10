@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 func NewResponsePacket(msgID int) *Packet {
@@ -81,10 +82,41 @@ type Server struct {
 	RootDSE map[string][]string
 
 	tlsConfig *tls.Config
+	wg        *waitGroup
 	mu        sync.Mutex
+	once      sync.Once
 	listeners []net.Listener
 	stopC     chan struct{}
 	factory   listenerFactory
+}
+
+// waitGroup - kind of a std WaitGroup
+// we can't use std WaitGroup here to keep original Server API
+type waitGroup struct {
+	cond    *sync.Cond
+	counter int32
+}
+
+func newWaitGroup() *waitGroup {
+	return &waitGroup{cond: sync.NewCond(&sync.Mutex{})}
+}
+
+func (w *waitGroup) add() {
+	atomic.AddInt32(&w.counter, 1)
+}
+
+func (w *waitGroup) done() {
+	atomic.AddInt32(&w.counter, -1)
+	w.cond.Broadcast()
+}
+
+func (w *waitGroup) wait() {
+	w.cond.Broadcast()
+	w.cond.L.Lock()
+	for atomic.LoadInt32(&w.counter) > 0 {
+		w.cond.Wait()
+	}
+	w.cond.L.Unlock()
 }
 
 type srvClient struct {
@@ -127,6 +159,7 @@ func NewServer(be Backend, tlsConfig *tls.Config) (*Server, error) {
 		tlsConfig: tlsConfig,
 		factory:   &listenerFactoryImpl{},
 		stopC:     make(chan struct{}),
+		wg:        newWaitGroup(),
 	}, nil
 }
 
@@ -141,6 +174,8 @@ func (srv *Server) Shutdown() error {
 		}
 	}
 	srv.mu.Unlock()
+
+	srv.wg.wait()
 
 	return err
 }
@@ -170,12 +205,15 @@ func (srv *Server) Serve(network, addr string) error {
 func (srv *Server) serve(ln net.Listener) error {
 	select {
 	case <-srv.stopC:
-		return errors.New("unable to serve because server is allready stopped")
+		return nil
 	default:
 		srv.mu.Lock()
 		srv.listeners = append(srv.listeners, ln)
 		srv.mu.Unlock()
 	}
+
+	srv.wg.add()
+	defer srv.wg.done()
 
 	for {
 		select {

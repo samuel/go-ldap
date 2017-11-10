@@ -4,21 +4,94 @@ import (
 	"crypto/tls"
 	"errors"
 	"github.com/stretchr/testify/assert"
+	"golang.org/x/net/context"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
+func TestWaitGroup_Wait(t *testing.T) {
+	var (
+		w      = newWaitGroup()
+		readyC = make(chan struct{})
+		stuck  bool
+	)
+
+	go func() {
+		w.wait()
+		close(readyC)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	select {
+	case <-ctx.Done():
+		stuck = true
+	case <-readyC:
+		// ok
+	}
+
+	assert.False(t, stuck)
+}
+
+func TestWaitGroup_AddDone(t *testing.T) {
+	var (
+		w      = newWaitGroup()
+		n      = 1000
+		readyC = make(chan struct{})
+		stuck  bool
+	)
+
+	for i := 0; i < n; i++ {
+		go func() {
+			w.add()
+			time.Sleep(1 * time.Millisecond)
+			w.done()
+		}()
+	}
+
+	go func() {
+		w.wait()
+		close(readyC)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(2*n)*time.Millisecond)
+	defer cancel()
+
+	select {
+	case <-ctx.Done():
+		stuck = true
+	case <-readyC:
+		// ok
+	}
+
+	assert.False(t, stuck)
+	assert.Equal(t, int32(0), atomic.LoadInt32(&w.counter))
+}
+
 func TestServer_Shutdown(t *testing.T) {
 	// try to start with closed listener
-	server := &Server{factory: &listenerFactoryMock{}, stopC: make(chan struct{})}
+	server := &Server{factory: &listenerFactoryMock{}, stopC: make(chan struct{}), wg: newWaitGroup()}
 	assert.NoError(t, server.Shutdown())
-	assert.Equal(t, errors.New("unable to serve because server is allready stopped"), server.Serve("", ""))
+	assert.NoError(t, server.Serve("", ""))
 
 	// shutdown while serving
-	server = &Server{factory: &listenerFactoryMock{}, stopC: make(chan struct{})}
-	time.AfterFunc(2*time.Second, func() { server.Shutdown() })
-	assert.NoError(t, server.Serve("", ""))
+	server = &Server{factory: &listenerFactoryMock{}, stopC: make(chan struct{}), wg: newWaitGroup()}
+	n := 1000
+	for i := 0; i < n; i++ {
+		go func() {
+			assert.NoError(t, server.Serve("", ""))
+		}()
+	}
+
+	time.AfterFunc(2*time.Second, func() {
+		assert.Equal(t, int32(n), atomic.LoadInt32(&server.wg.counter))
+		server.Shutdown()
+		assert.Equal(t, int32(0), atomic.LoadInt32(&server.wg.counter))
+
+	})
 }
 
 // listenerFactoryMock - listener factory mock for unit testing
