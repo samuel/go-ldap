@@ -215,10 +215,11 @@ func (srv *Server) serve(ln net.Listener) error {
 
 	for {
 		cn, err := ln.Accept()
-		if err != nil && isTemporary(err) {
-			log.Printf("Accept failed: %+v", err)
-			continue
-		} else {
+		if err != nil {
+			if isTemporary(err) {
+				log.Printf("Accept failed: %+v", err)
+				continue
+			}
 			return err
 		}
 
