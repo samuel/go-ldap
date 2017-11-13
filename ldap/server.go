@@ -84,7 +84,6 @@ type Server struct {
 	tlsConfig *tls.Config
 	wg        *waitGroup
 	mu        sync.Mutex
-	once      sync.Once
 	listeners []net.Listener
 	isStopped bool
 	factory   listenerFactory
