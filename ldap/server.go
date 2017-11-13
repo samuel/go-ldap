@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 func NewResponsePacket(msgID int) *Packet {
@@ -80,13 +82,64 @@ type Server struct {
 	RootDSE map[string][]string
 
 	tlsConfig *tls.Config
+	wg        *waitGroup
+	mu        sync.Mutex
+	listeners []net.Listener
+	isStopped bool
+	factory   listenerFactory
+}
+
+// waitGroup - kind of a std WaitGroup
+// we can't use std WaitGroup here to keep original Server API
+// std WaitGroup doesn't allow to call Wait before Add
+// but technically we can call Shutdown before Serve
+type waitGroup struct {
+	cond    *sync.Cond
+	counter int32
+}
+
+func newWaitGroup() *waitGroup {
+	return &waitGroup{cond: sync.NewCond(&sync.Mutex{})}
+}
+
+func (w *waitGroup) add() {
+	atomic.AddInt32(&w.counter, 1)
+}
+
+func (w *waitGroup) done() {
+	atomic.AddInt32(&w.counter, -1)
+	w.cond.Broadcast()
+}
+
+func (w *waitGroup) wait() {
+	w.cond.Broadcast()
+	w.cond.L.Lock()
+	for atomic.LoadInt32(&w.counter) > 0 {
+		w.cond.Wait()
+	}
+	w.cond.L.Unlock()
 }
 
 type srvClient struct {
 	cn  net.Conn
+	wg  *waitGroup
 	wr  *bufio.Writer
 	srv *Server
 	ctx Context
+}
+
+type listenerFactory interface {
+	newListener(network, address string) (net.Listener, error)
+	newTLSListener(network, addr string, config *tls.Config) (net.Listener, error)
+}
+
+type listenerFactoryImpl struct{}
+
+func (_ *listenerFactoryImpl) newListener(network, address string) (net.Listener, error) {
+	return net.Listen(network, address)
+}
+func (_ *listenerFactoryImpl) newTLSListener(network, addr string, config *tls.Config) (net.Listener, error) {
+	return tls.Listen(network, addr, config)
 }
 
 func NewServer(be Backend, tlsConfig *tls.Config) (*Server, error) {
@@ -106,7 +159,26 @@ func NewServer(be Backend, tlsConfig *tls.Config) (*Server, error) {
 		Backend:   be,
 		RootDSE:   sf,
 		tlsConfig: tlsConfig,
+		factory:   &listenerFactoryImpl{},
+		wg:        newWaitGroup(),
 	}, nil
+}
+
+func (srv *Server) Shutdown() error {
+	var err error
+
+	srv.mu.Lock()
+	srv.isStopped = true
+	for _, listener := range srv.listeners {
+		if e := listener.Close(); e != nil {
+			err = e
+		}
+	}
+	srv.mu.Unlock()
+
+	srv.wg.wait()
+
+	return err
 }
 
 func (srv *Server) ServeTLS(network, addr string, tlsConfig *tls.Config) error {
@@ -116,7 +188,7 @@ func (srv *Server) ServeTLS(network, addr string, tlsConfig *tls.Config) error {
 	if tlsConfig == nil {
 		return errors.New("ldap: no TLS config")
 	}
-	ln, err := tls.Listen(network, addr, tlsConfig)
+	ln, err := srv.factory.newTLSListener(network, addr, tlsConfig)
 	if err != nil {
 		return err
 	}
@@ -124,7 +196,7 @@ func (srv *Server) ServeTLS(network, addr string, tlsConfig *tls.Config) error {
 }
 
 func (srv *Server) Serve(network, addr string) error {
-	ln, err := net.Listen(network, addr)
+	ln, err := srv.factory.newListener(network, addr)
 	if err != nil {
 		return err
 	}
@@ -132,22 +204,44 @@ func (srv *Server) Serve(network, addr string) error {
 }
 
 func (srv *Server) serve(ln net.Listener) error {
+	srv.mu.Lock()
+	if srv.isStopped {
+		srv.mu.Unlock()
+		return nil
+	}
+	srv.listeners = append(srv.listeners, ln)
+	srv.mu.Unlock()
+
 	for {
 		cn, err := ln.Accept()
 		if err != nil {
-			log.Printf("Accept failed: %+v", err)
-			continue
+			if isTemporary(err) {
+				log.Printf("Accept failed: %+v", err)
+				continue
+			}
+			return err
 		}
 
 		go (&srvClient{
 			cn:  cn,
+			wg:  srv.wg,
 			wr:  bufio.NewWriter(cn),
 			srv: srv,
 		}).serve()
 	}
 }
 
+func isTemporary(err error) bool {
+	if ne, ok := err.(net.Error); ok {
+		return ne.Temporary()
+	}
+	return false
+}
+
 func (cli *srvClient) serve() {
+	cli.wg.add()
+	defer cli.wg.done()
+
 	ctx, err := cli.srv.Backend.Connect(cli.cn.RemoteAddr())
 	if err != nil {
 		cli.cn.Close()
