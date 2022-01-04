@@ -58,7 +58,7 @@ func Connect() (*ldap.Client, error) {
 		cli, err = ldap.Dial("tcp", addr)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("Failed to connect to server: %s", err)
+		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
 
 	if !enableTLS && *flagStartTLS {
@@ -66,7 +66,7 @@ func Connect() (*ldap.Client, error) {
 			InsecureSkipVerify: *flagInsecure,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("Failed to StartTLS: %s", err)
+			return nil, fmt.Errorf("failed to StartTLS: %w", err)
 		}
 	}
 
@@ -74,12 +74,15 @@ func Connect() (*ldap.Client, error) {
 		var pass []byte
 		if *flagPromptPass {
 			fmt.Printf("Enter LDAP Password: ")
-			pass = gopass.GetPasswd()
+			pass, err = gopass.GetPasswd()
+			if err != nil {
+				return nil, fmt.Errorf("getpasswd failed: %w", err)
+			}
 		} else {
 			pass = []byte(*flagBindPass)
 		}
 		if err := cli.Bind(*flagBindDN, pass); err != nil {
-			return nil, fmt.Errorf("Bind failed: %s", err.Error())
+			return nil, fmt.Errorf("bind failed: %w", err)
 		}
 	}
 

@@ -72,6 +72,6 @@ func main() {
 		if i != 0 {
 			fmt.Println()
 		}
-		r.ToLDIF(os.Stdout)
+		_ = r.ToLDIF(os.Stdout)
 	}
 }

@@ -189,14 +189,14 @@ func (c ResultCode) String() string {
 	return s
 }
 
-type ErrUnsupportedRequestTag int
+type UnsupportedRequestTagError int
 
-func (e ErrUnsupportedRequestTag) Error() string {
+func (e UnsupportedRequestTagError) Error() string {
 	return fmt.Sprintf("ldap: unsupported request tag %d", int(e))
 }
 
-type ErrProtocolError string
+type ProtocolError string
 
-func (e ErrProtocolError) Error() string {
+func (e ProtocolError) Error() string {
 	return fmt.Sprintf("ldap: protocol error: %s", string(e))
 }

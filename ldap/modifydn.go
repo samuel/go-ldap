@@ -15,26 +15,26 @@ type ModifyDNResponse struct {
 
 func parseModifyDNRequest(pkt *Packet) (*ModifyDNRequest, error) {
 	if len(pkt.Items) < 3 || len(pkt.Items) > 4 {
-		return nil, ErrProtocolError("wrong number of items")
+		return nil, ProtocolError("wrong number of items")
 	}
 	var ok bool
 	req := &ModifyDNRequest{}
 	req.DN, ok = pkt.Items[0].Str()
 	if !ok {
-		return nil, ErrProtocolError("invalid dn")
+		return nil, ProtocolError("invalid dn")
 	}
 	req.NewRDN, ok = pkt.Items[1].Str()
 	if !ok {
-		return nil, ErrProtocolError("invalid newrdn")
+		return nil, ProtocolError("invalid newrdn")
 	}
 	req.DeleteOldRDN, ok = pkt.Items[2].Bool()
 	if !ok {
-		return nil, ErrProtocolError("invalid deleteoldrdn")
+		return nil, ProtocolError("invalid deleteoldrdn")
 	}
 	if len(pkt.Items) == 4 {
 		req.NewSuperior, ok = pkt.Items[3].Str()
 		if !ok {
-			return nil, ErrProtocolError("invalid newSuperior")
+			return nil, ProtocolError("invalid newSuperior")
 		}
 	}
 	return req, nil

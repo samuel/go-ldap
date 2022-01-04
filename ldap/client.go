@@ -100,12 +100,12 @@ func (c *Client) start() {
 				break
 			}
 			if pkt.Class != ClassUniversal || pkt.Primitive || pkt.Tag != TagSequence || len(pkt.Items) < 2 {
-				e = ErrProtocolError("invalid response packet")
+				e = ProtocolError("invalid response packet")
 				break
 			}
 			msgID, ok := pkt.Items[0].Int()
 			if !ok {
-				e = ErrProtocolError("failed to parse msgID from response")
+				e = ProtocolError("failed to parse msgID from response")
 				break
 			}
 			c.mu.Lock()
@@ -290,7 +290,7 @@ func (c *Client) Search(req *SearchRequest) ([]*SearchResult, error) {
 			}
 			return results, res.Err()
 		default:
-			return results, ErrProtocolError("unexpected tag for search response")
+			return results, ProtocolError("unexpected tag for search response")
 		}
 	}
 }

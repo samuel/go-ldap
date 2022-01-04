@@ -14,18 +14,18 @@ type BindResponse struct {
 
 func parseBindRequest(pkt *Packet) (*BindRequest, error) {
 	if len(pkt.Items) != 3 {
-		return nil, ErrProtocolError("bind request should have 3 values")
+		return nil, ProtocolError("bind request should have 3 values")
 	}
 	ver, ok := pkt.Items[0].Int()
 	if !ok || ver != protocolVersion {
-		return nil, ErrProtocolError("unsupported or invalid version")
+		return nil, ProtocolError("unsupported or invalid version")
 	}
 	req := &BindRequest{}
 	if req.DN, ok = pkt.Items[1].Str(); !ok {
-		return nil, ErrProtocolError("can't parse dn for bind request")
+		return nil, ProtocolError("can't parse dn for bind request")
 	}
 	if req.Password, ok = pkt.Items[2].Bytes(); !ok {
-		return nil, ErrProtocolError("can't parse simple password for bind request")
+		return nil, ProtocolError("can't parse simple password for bind request")
 	}
 	// TODO: SASL
 	return req, nil

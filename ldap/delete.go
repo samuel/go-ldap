@@ -13,7 +13,7 @@ type DeleteResponse struct {
 func parseDeleteRequest(pkt *Packet) (*DeleteRequest, error) {
 	dn, ok := pkt.Str()
 	if !ok {
-		return nil, ErrProtocolError("invalid dn")
+		return nil, ProtocolError("invalid dn")
 	}
 	return &DeleteRequest{DN: dn}, nil
 }

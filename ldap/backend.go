@@ -59,7 +59,7 @@ func (debugBackend) Delete(ctx Context, req *DeleteRequest) (*DeleteResponse, er
 
 func (debugBackend) ExtendedRequest(ctx Context, req *ExtendedRequest) (*ExtendedResponse, error) {
 	fmt.Printf("EXTENDED %+v\n", req)
-	return nil, ErrProtocolError("unsupported extended request")
+	return nil, ProtocolError("unsupported extended request")
 }
 
 func (debugBackend) Modify(ctx Context, req *ModifyRequest) (*ModifyResponse, error) {

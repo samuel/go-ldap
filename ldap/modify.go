@@ -46,32 +46,32 @@ type ModifyResponse struct {
 
 func parseModifyRequest(pkt *Packet) (*ModifyRequest, error) {
 	if len(pkt.Items) != 2 {
-		return nil, ErrProtocolError("modify request requires exactly 2 items")
+		return nil, ProtocolError("modify request requires exactly 2 items")
 	}
 	dn, ok := pkt.Items[0].Str()
 	if !ok {
-		return nil, ErrProtocolError("invalid dn")
+		return nil, ProtocolError("invalid dn")
 	}
 	req := &ModifyRequest{DN: dn}
 	for _, it := range pkt.Items[1].Items {
 		if len(it.Items) != 2 || len(it.Items[1].Items) != 2 {
-			return nil, ErrProtocolError("mod operation requires 2 items")
+			return nil, ProtocolError("mod operation requires 2 items")
 		}
 		mod := &Mod{}
 		typ, ok := it.Items[0].Int()
 		if !ok {
-			return nil, ErrProtocolError("invalid mod op")
+			return nil, ProtocolError("invalid mod op")
 		}
 		mod.Type = ModType(typ)
 		mod.Name, ok = it.Items[1].Items[0].Str()
 		if !ok {
-			return nil, ErrProtocolError("invalid attribute name")
+			return nil, ProtocolError("invalid attribute name")
 		}
 		mod.Values = make([][]byte, len(it.Items[1].Items[1].Items))
 		for i, c := range it.Items[1].Items[1].Items {
 			val, ok := c.Bytes()
 			if !ok {
-				return nil, ErrProtocolError("invalid attribute value")
+				return nil, ProtocolError("invalid attribute value")
 			}
 			mod.Values[i] = val
 		}

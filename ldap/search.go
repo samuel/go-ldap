@@ -170,31 +170,31 @@ func (r *SearchRequest) WritePackets(w io.Writer, msgID int) error {
 
 func parseSearchRequest(pkt *Packet) (*SearchRequest, error) {
 	if len(pkt.Items) != 8 {
-		return nil, ErrProtocolError("search request should have 8 items")
+		return nil, ProtocolError("search request should have 8 items")
 	}
 	var ok bool
 	req := &SearchRequest{}
 	if req.BaseDN, ok = pkt.Items[0].Str(); !ok {
-		return nil, ErrProtocolError("can't parse baseObject for search request")
+		return nil, ProtocolError("can't parse baseObject for search request")
 	}
 	scope, ok := pkt.Items[1].Int()
 	if !ok {
-		return nil, ErrProtocolError("can't parse scope for search request")
+		return nil, ProtocolError("can't parse scope for search request")
 	}
 	req.Scope = Scope(scope)
 	deref, ok := pkt.Items[2].Int()
 	if !ok {
-		return nil, ErrProtocolError("can't parse derefAliases for search request")
+		return nil, ProtocolError("can't parse derefAliases for search request")
 	}
 	req.DerefAliases = DerefAliases(deref)
 	if req.SizeLimit, ok = pkt.Items[3].Int(); !ok {
-		return nil, ErrProtocolError("can't parse sizeLimit for search request")
+		return nil, ProtocolError("can't parse sizeLimit for search request")
 	}
 	if req.TimeLimit, ok = pkt.Items[4].Int(); !ok {
-		return nil, ErrProtocolError("can't parse sizeLimit for search request")
+		return nil, ProtocolError("can't parse sizeLimit for search request")
 	}
 	if req.TypesOnly, ok = pkt.Items[5].Bool(); !ok {
-		return nil, ErrProtocolError("can't parse typesOnly for search request")
+		return nil, ProtocolError("can't parse typesOnly for search request")
 	}
 	var err error
 	req.Filter, err = parseSearchFilter(pkt.Items[6])
@@ -205,7 +205,7 @@ func parseSearchRequest(pkt *Packet) (*SearchRequest, error) {
 	for _, it := range pkt.Items[7].Items {
 		s, ok := it.Str()
 		if !ok {
-			return nil, ErrProtocolError("can't parse attribute from list for search request")
+			return nil, ProtocolError("can't parse attribute from list for search request")
 		}
 		req.Attributes[strings.ToLower(s)] = true
 	}
@@ -214,27 +214,27 @@ func parseSearchRequest(pkt *Packet) (*SearchRequest, error) {
 
 func parseSearchResultResponse(pkt *Packet) (*SearchResult, error) {
 	if len(pkt.Items) != 2 {
-		return nil, ErrProtocolError("search result response should have 2 items")
+		return nil, ProtocolError("search result response should have 2 items")
 	}
 	var ok bool
 	res := &SearchResult{}
 	res.DN, ok = pkt.Items[0].Str()
 	if !ok {
-		return nil, ErrProtocolError("failed to parse dn for search result response")
+		return nil, ProtocolError("failed to parse dn for search result response")
 	}
 	res.Attributes = make(map[string][][]byte)
 	for _, p := range pkt.Items[1].Items {
 		if len(p.Items) != 2 {
-			return nil, ErrProtocolError("search result response attribute should have 2 items")
+			return nil, ProtocolError("search result response attribute should have 2 items")
 		}
 		name, ok := p.Items[0].Str()
 		if !ok {
-			return nil, ErrProtocolError("failed to parse attribute name in search result response")
+			return nil, ProtocolError("failed to parse attribute name in search result response")
 		}
 		for _, p2 := range p.Items[1].Items {
 			value, ok := p2.Bytes()
 			if !ok {
-				return nil, ErrProtocolError("failed to parse attribute value in search result response")
+				return nil, ProtocolError("failed to parse attribute value in search result response")
 			}
 			res.Attributes[name] = append(res.Attributes[name], value)
 		}

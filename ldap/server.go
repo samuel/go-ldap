@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 	"strings"
 )
 
@@ -57,20 +56,20 @@ func (r *BaseResponse) NewPacket() *Packet {
 
 func parseBaseResponse(pkt *Packet, res *BaseResponse) error {
 	if len(pkt.Items) < 3 {
-		return ErrProtocolError("base response should have at least 3 values")
+		return ProtocolError("base response should have at least 3 values")
 	}
 	code, ok := pkt.Items[0].Int()
 	if !ok {
-		return ErrProtocolError("invalid code in response")
+		return ProtocolError("invalid code in response")
 	}
 	res.Code = ResultCode(code)
 	res.MatchedDN, ok = pkt.Items[1].Str()
 	if !ok {
-		return ErrProtocolError("invalid matchedDN in response")
+		return ProtocolError("invalid matchedDN in response")
 	}
 	res.Message, ok = pkt.Items[2].Str()
 	if !ok {
-		return ErrProtocolError("invalid message in response")
+		return ProtocolError("invalid message in response")
 	}
 	return nil
 }
@@ -93,11 +92,7 @@ func NewServer(be Backend, tlsConfig *tls.Config) (*Server, error) {
 	// Copy the default RootDSE
 	sf := make(map[string][]string, len(RootDSE))
 	for name, vals := range RootDSE {
-		v := make([]string, len(vals))
-		for i, x := range vals {
-			v[i] = x
-		}
-		sf[name] = v
+		sf[name] = append([]string(nil), vals...)
 	}
 	if tlsConfig != nil {
 		sf["supportedExtension"] = append(sf["supportedExtension"], OIDStartTLS)
@@ -186,18 +181,18 @@ func (cli *srvClient) serve() {
 		if err := cli.processRequest(msgID, pkt.Items[1]); err != nil {
 			end := true
 			if err != io.EOF {
-				log.Printf("Processing of request failed: %s", err.Error())
+				log.Printf("Processing of request failed: %s", err)
 				res := &BaseResponse{
 					MessageType: pkt.Items[1].Tag + 1,
 					Code:        ResultOther,
 					Message:     "ERROR",
 				}
 				switch e := err.(type) {
-				case ErrProtocolError:
+				case ProtocolError:
 					res.Code = ResultProtocolError
 					res.Message = string(e)
 					end = false
-				case ErrUnsupportedRequestTag:
+				case UnsupportedRequestTagError:
 					res.Code = ResultUnwillingToPerform
 					res.Message = fmt.Sprintf("unsupported request tag %d", int(e))
 					end = false
@@ -221,8 +216,8 @@ func (cli *srvClient) processRequest(msgID int, pkt *Packet) error {
 	var res Response
 	switch pkt.Tag {
 	default:
-		pkt.Format(os.Stdout)
-		return ErrUnsupportedRequestTag(pkt.Tag)
+		// _ = pkt.Format(os.Stdout)
+		return UnsupportedRequestTagError(pkt.Tag)
 	case ApplicationUnbindRequest:
 		return io.EOF
 	case ApplicationBindRequest:
