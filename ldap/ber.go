@@ -14,9 +14,9 @@ import (
 
 const maxPacketSize = 32 << 20 // 32 MB
 
-type ErrInvalidBEREncoding string
+type InvalidBEREncodingError string
 
-func (e ErrInvalidBEREncoding) Error() string {
+func (e InvalidBEREncodingError) Error() string {
 	return string(e)
 }
 
@@ -131,9 +131,9 @@ func ReadPacket(rd io.Reader) (*Packet, int, error) {
 	if dataLen&0x80 != 0 {
 		nl := int(dataLen & 0x7f)
 		if nl == 0 {
-			return nil, 2, ErrInvalidBEREncoding("ldap: indefinite form for length not supported")
+			return nil, 2, InvalidBEREncodingError("ldap: indefinite form for length not supported")
 		} else if nl > 8 {
-			return nil, 2, ErrInvalidBEREncoding("ldap: number of size bytes failed sanity check")
+			return nil, 2, InvalidBEREncodingError("ldap: number of size bytes failed sanity check")
 		}
 		if n, err := io.ReadFull(rd, buf[2:2+nl]); err != nil {
 			return nil, hdr + n, err
@@ -144,7 +144,7 @@ func ReadPacket(rd io.Reader) (*Packet, int, error) {
 			dataLen = (dataLen << 8) | int(buf[i])
 		}
 		if dataLen > maxPacketSize {
-			return nil, 2 + nl, ErrInvalidBEREncoding("ldap: packet larger than max allowed size")
+			return nil, 2 + nl, InvalidBEREncodingError("ldap: packet larger than max allowed size")
 		}
 	}
 
@@ -164,7 +164,7 @@ func ReadPacket(rd io.Reader) (*Packet, int, error) {
 
 func ParsePacket(buf []byte) (*Packet, int, error) {
 	if len(buf) < 2 {
-		return nil, 0, ErrInvalidBEREncoding("ldap: short packet")
+		return nil, 0, InvalidBEREncodingError("ldap: short packet")
 	}
 
 	hdr := 2
@@ -172,12 +172,12 @@ func ParsePacket(buf []byte) (*Packet, int, error) {
 	if dataLen&0x80 != 0 {
 		n := int(dataLen & 0x7f)
 		if n == 0 {
-			return nil, hdr, ErrInvalidBEREncoding("ldap: indefinite form for length not supported")
+			return nil, hdr, InvalidBEREncodingError("ldap: indefinite form for length not supported")
 		} else if n > 8 {
-			return nil, hdr, ErrInvalidBEREncoding("ldap: number of size bytes failed sanity check")
+			return nil, hdr, InvalidBEREncodingError("ldap: number of size bytes failed sanity check")
 		}
 		if len(buf) < 2+n {
-			return nil, hdr, ErrInvalidBEREncoding("ldap: short packet")
+			return nil, hdr, InvalidBEREncodingError("ldap: short packet")
 		}
 		hdr += n
 		dataLen = 0
@@ -185,12 +185,12 @@ func ParsePacket(buf []byte) (*Packet, int, error) {
 			dataLen = (dataLen << 8) | int(buf[i])
 		}
 		if dataLen > maxPacketSize {
-			return nil, hdr, ErrInvalidBEREncoding("ldap: packet larger than max allowed size")
+			return nil, hdr, InvalidBEREncodingError("ldap: packet larger than max allowed size")
 		}
 	}
 
 	if dataLen > len(buf)-hdr {
-		return nil, hdr, ErrInvalidBEREncoding("ldap: short packet")
+		return nil, hdr, InvalidBEREncodingError("ldap: short packet")
 	}
 	data := buf[hdr : hdr+dataLen]
 
@@ -468,7 +468,7 @@ func parseValue(tag int, data []byte) (interface{}, error) {
 		return data, nil
 	case TagBoolean:
 		if len(data) != 1 {
-			return nil, ErrInvalidBEREncoding("ldap: bool other than 1")
+			return nil, InvalidBEREncodingError("ldap: bool other than 1")
 		}
 		return data[0] != 0, nil
 	case TagInteger, TagEnumerated:

@@ -2,6 +2,7 @@ package ldap
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -82,10 +83,10 @@ type Server struct {
 }
 
 type srvClient struct {
-	cn  net.Conn
-	wr  *bufio.Writer
-	srv *Server
-	ctx Context
+	cn    net.Conn
+	wr    *bufio.Writer
+	srv   *Server
+	state State
 }
 
 func NewServer(be Backend, tlsConfig *tls.Config) (*Server, error) {
@@ -143,21 +144,27 @@ func (srv *Server) serve(ln net.Listener) error {
 }
 
 func (cli *srvClient) serve() {
-	ctx, err := cli.srv.Backend.Connect(cli.cn.RemoteAddr())
+	state, err := cli.srv.Backend.Connect(cli.cn.RemoteAddr())
 	if err != nil {
 		cli.cn.Close()
 		return
 	}
-	cli.ctx = ctx
+	cli.state = state
+
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	defer func() {
 		cli.cn.Close()
-		if cli.ctx != nil {
-			cli.srv.Backend.Disconnect(ctx)
+		if cli.state != nil {
+			cli.srv.Backend.Disconnect(state)
 		}
 	}()
 
 	for {
+		// TODO: create a subcontext with a deadline
+
 		pkt, _, err := ReadPacket(cli.cn)
 		if err != nil {
 			if err != io.EOF {
@@ -178,7 +185,13 @@ func (cli *srvClient) serve() {
 			return
 		}
 
-		if err := cli.processRequest(msgID, pkt.Items[1]); err != nil {
+		// TODO: parse rest of packet: control
+		// https://ldapwiki.com/wiki/SupportedControl
+		// 1.2.840.113556.1.4.319
+		//   https://ldapwiki.com/wiki/Simple%20Paged%20Results%20Control
+		//   https://oidref.com/1.2.840.113556.1.4.319
+
+		if err := cli.processRequest(ctx, msgID, pkt.Items[1]); err != nil {
 			end := true
 			if err != io.EOF {
 				log.Printf("Processing of request failed: %s", err)
@@ -212,7 +225,8 @@ func (cli *srvClient) serve() {
 }
 
 // return an error when the client connection should be closed
-func (cli *srvClient) processRequest(msgID int, pkt *Packet) error {
+func (cli *srvClient) processRequest(ctx context.Context, msgID int, pkt *Packet) error {
+	// TODO: use context for deadlines and cancellations
 	var res Response
 	switch pkt.Tag {
 	default:
@@ -226,7 +240,7 @@ func (cli *srvClient) processRequest(msgID int, pkt *Packet) error {
 		if err != nil {
 			return err
 		}
-		res, err = cli.srv.Backend.Bind(cli.ctx, req)
+		res, err = cli.srv.Backend.Bind(ctx, cli.state, req)
 		if err != nil {
 			return err
 		}
@@ -238,7 +252,7 @@ func (cli *srvClient) processRequest(msgID int, pkt *Packet) error {
 		if req.BaseDN == "" && req.Scope == ScopeBaseObject { // TODO check filter
 			res, err = cli.rootDSE(req)
 		} else {
-			res, err = cli.srv.Backend.Search(cli.ctx, req)
+			res, err = cli.srv.Backend.Search(ctx, cli.state, req)
 		}
 		if err != nil {
 			return err
@@ -248,7 +262,7 @@ func (cli *srvClient) processRequest(msgID int, pkt *Packet) error {
 		if err != nil {
 			return err
 		}
-		res, err = cli.srv.Backend.Add(cli.ctx, req)
+		res, err = cli.srv.Backend.Add(ctx, cli.state, req)
 		if err != nil {
 			return err
 		}
@@ -257,7 +271,7 @@ func (cli *srvClient) processRequest(msgID int, pkt *Packet) error {
 		if err != nil {
 			return err
 		}
-		res, err = cli.srv.Backend.Delete(cli.ctx, req)
+		res, err = cli.srv.Backend.Delete(ctx, cli.state, req)
 		if err != nil {
 			return err
 		}
@@ -266,7 +280,7 @@ func (cli *srvClient) processRequest(msgID int, pkt *Packet) error {
 		if err != nil {
 			return err
 		}
-		res, err = cli.srv.Backend.Modify(cli.ctx, req)
+		res, err = cli.srv.Backend.Modify(ctx, cli.state, req)
 		if err != nil {
 			return err
 		}
@@ -275,7 +289,7 @@ func (cli *srvClient) processRequest(msgID int, pkt *Packet) error {
 		if err != nil {
 			return err
 		}
-		res, err = cli.srv.Backend.ModifyDN(cli.ctx, req)
+		res, err = cli.srv.Backend.ModifyDN(ctx, cli.state, req)
 		if err != nil {
 			return err
 		}
@@ -287,7 +301,7 @@ func (cli *srvClient) processRequest(msgID int, pkt *Packet) error {
 
 		switch req.Name {
 		default:
-			res, err = cli.srv.Backend.ExtendedRequest(cli.ctx, req)
+			res, err = cli.srv.Backend.ExtendedRequest(ctx, cli.state, req)
 			if err != nil {
 				return err
 			}
@@ -328,7 +342,7 @@ func (cli *srvClient) processRequest(msgID int, pkt *Packet) error {
 			} else {
 				r = &PasswordModifyRequest{}
 			}
-			gen, err := cli.srv.Backend.PasswordModify(cli.ctx, r)
+			gen, err := cli.srv.Backend.PasswordModify(ctx, cli.state, r)
 			if err != nil {
 				return err
 			}
@@ -344,7 +358,7 @@ func (cli *srvClient) processRequest(msgID int, pkt *Packet) error {
 				Value: b,
 			}
 		case OIDWhoAmI:
-			v, err := cli.srv.Backend.Whoami(cli.ctx)
+			v, err := cli.srv.Backend.Whoami(ctx, cli.state)
 			if err != nil {
 				return err
 			}

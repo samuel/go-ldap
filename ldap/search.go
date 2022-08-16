@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 	"unicode/utf8"
 )
 
@@ -207,7 +206,7 @@ func parseSearchRequest(pkt *Packet) (*SearchRequest, error) {
 		if !ok {
 			return nil, ProtocolError("can't parse attribute from list for search request")
 		}
-		req.Attributes[strings.ToLower(s)] = true
+		req.Attributes[s] = true // TODO: should we lower case these? [strings.ToLower(s)] = true
 	}
 	return req, nil
 }
