@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"time"
 )
 
 func NewResponsePacket(msgID int) *Packet {
@@ -80,6 +81,10 @@ type Server struct {
 	RootDSE map[string][]string
 
 	tlsConfig *tls.Config
+	// processingTimeout is how long to allow for the execution of a request.
+	processingTimeout time.Duration
+	// responseTimeout is how long to allow for the response to be written to the client.
+	responseTimeout time.Duration
 }
 
 type srvClient struct {
@@ -99,9 +104,11 @@ func NewServer(be Backend, tlsConfig *tls.Config) (*Server, error) {
 		sf["supportedExtension"] = append(sf["supportedExtension"], OIDStartTLS)
 	}
 	return &Server{
-		Backend:   be,
-		RootDSE:   sf,
-		tlsConfig: tlsConfig,
+		Backend:           be,
+		RootDSE:           sf,
+		tlsConfig:         tlsConfig,
+		processingTimeout: time.Second * 10,
+		responseTimeout:   time.Second * 5,
 	}, nil
 }
 
@@ -168,7 +175,7 @@ func (cli *srvClient) serve() {
 		pkt, _, err := ReadPacket(cli.cn)
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("ReadPacket failed: %s", err.Error())
+				log.Printf("ReadPacket failed from %s: %s", cli.cn.RemoteAddr(), err)
 			}
 			return
 		}
@@ -210,11 +217,18 @@ func (cli *srvClient) serve() {
 					res.Message = fmt.Sprintf("unsupported request tag %d", int(e))
 					end = false
 				}
-				if err := res.WritePackets(cli.wr, msgID); err != nil {
-					log.Printf("Failed to write error response: %s", err)
-				}
-				if err := cli.wr.Flush(); err != nil {
+				if err := cli.cn.SetWriteDeadline(time.Now().Add(cli.srv.responseTimeout)); err != nil {
+					log.Printf("Failed to set write deadline: %s", err)
+					end = true
+				} else if err := res.WritePackets(cli.wr, msgID); err != nil {
+					log.Printf("Failed to write error response to %s: %s", cli.cn.RemoteAddr(), err)
+					end = true
+				} else if err := cli.wr.Flush(); err != nil {
 					log.Printf("Failed to flush: %s", err)
+					end = true
+				} else if err := cli.cn.SetWriteDeadline(time.Time{}); err != nil {
+					log.Printf("Failed to clear write deadline: %s", err)
+					end = true
 				}
 			}
 			if end {
@@ -226,6 +240,9 @@ func (cli *srvClient) serve() {
 
 // return an error when the client connection should be closed
 func (cli *srvClient) processRequest(ctx context.Context, msgID int, pkt *Packet) error {
+	ctx, cancel := context.WithTimeout(ctx, cli.srv.processingTimeout)
+	defer cancel()
+
 	// TODO: use context for deadlines and cancellations
 	var res Response
 	switch pkt.Tag {
@@ -367,6 +384,14 @@ func (cli *srvClient) processRequest(ctx context.Context, msgID int, pkt *Packet
 			}
 		}
 	}
+	if err := cli.cn.SetWriteDeadline(time.Now().Add(cli.srv.responseTimeout)); err != nil {
+		return fmt.Errorf("failed to set deadline for write: %w", err)
+	}
+	defer func() {
+		if err := cli.cn.SetWriteDeadline(time.Time{}); err != nil {
+			log.Printf("failed to clear deadline for write: %s", err)
+		}
+	}()
 	if res != nil {
 		if err := res.WritePackets(cli.wr, msgID); err != nil {
 			return err
