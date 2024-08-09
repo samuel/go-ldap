@@ -72,6 +72,20 @@ const (
 	ApplicationExtendedResponse      = 24
 )
 
+// applicationResponseTag maps a request's application message tag to the tag of
+// its corresponding response. Requests that have no response (Unbind, Abandon)
+// and unknown tags are intentionally absent.
+var applicationResponseTag = map[int]int{
+	ApplicationBindRequest:     ApplicationBindResponse,
+	ApplicationSearchRequest:   ApplicationSearchResultDone,
+	ApplicationModifyRequest:   ApplicationModifyResponse,
+	ApplicationAddRequest:      ApplicationAddResponse,
+	ApplicationDelRequest:      ApplicationDelResponse,
+	ApplicationModifyDNRequest: ApplicationModifyDNResponse,
+	ApplicationCompareRequest:  ApplicationCompareResponse,
+	ApplicationExtendedRequest: ApplicationExtendedResponse,
+}
+
 var ApplicationMap = map[uint8]string{
 	ApplicationBindRequest:           "Bind Request",
 	ApplicationBindResponse:          "Bind Response",

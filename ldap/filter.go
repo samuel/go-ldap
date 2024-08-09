@@ -227,7 +227,7 @@ var escapes = map[rune][]rune{
 	'(':  []rune(`\28`),
 	')':  []rune(`\29`),
 	'&':  []rune(`\26`),
-	'|':  []rune(`\3c`),
+	'|':  []rune(`\7c`),
 	'=':  []rune(`\3d`),
 	'>':  []rune(`\3e`),
 	'<':  []rune(`\3c`),
@@ -295,7 +295,7 @@ func parseFilter(tok *tokenizer, checkClose bool) (Filter, error) {
 		}
 		filter = &NOT{Filter: f}
 	default:
-		name := []rune{r}
+		name := utf8.AppendRune(nil, r)
 		var op string
 		for op == "" {
 			r = tok.next()
@@ -317,77 +317,82 @@ func parseFilter(tok *tokenizer, checkClose bool) (Filter, error) {
 					return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "unxpected end of filter"}
 				}
 				h := string(r1) + string(r2)
-				n, err := strconv.ParseInt(h, 16, 8)
+				n, err := strconv.ParseUint(h, 16, 8)
 				if err != nil {
 					return nil, &ErrFilterSyntaxError{Pos: tok.cpos - 2, Msg: "unable to parse hex code: " + err.Error()}
 				}
-				name = append(name, rune(n))
+				name = append(name, byte(n))
 			default:
-				name = append(name, r)
+				name = utf8.AppendRune(name, r)
 			}
 		}
-		var value []rune
-		hasStar := false
+		// Split the value on unescaped '*' as we read it. An escaped star
+		// (e.g. \2a) is appended to the current segment so it is treated as a
+		// literal rather than a wildcard separator.
+		var parts [][]byte
+		var cur []byte
+		stars := 0
 	valueLoop:
 		for {
 			r = tok.next()
-			if r == '*' {
-				hasStar = true
-			}
 			switch r {
 			case 0, utf8.RuneError:
-				return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "unxpected end of filter"}
+				return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "unexpected end of filter"}
 			case ')':
 				tok.pos--
 				break valueLoop
+			case '*':
+				stars++
+				parts = append(parts, cur)
+				cur = nil
 			case '\\':
 				// hex code
 				r1 := tok.next()
 				r2 := tok.next()
 				if r1 == 0 || r2 == 0 || r1 == utf8.RuneError || r2 == utf8.RuneError {
-					return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "unxpected end of filter"}
+					return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "unexpected end of filter"}
 				}
 				h := string(r1) + string(r2)
-				n, err := strconv.ParseInt(h, 16, 8)
+				n, err := strconv.ParseUint(h, 16, 8)
 				if err != nil {
 					return nil, &ErrFilterSyntaxError{Pos: tok.cpos - 2, Msg: "unable to parse hex code: " + err.Error()}
 				}
-				value = append(value, rune(n))
+				cur = append(cur, byte(n))
 			default:
-				value = append(value, r)
+				cur = utf8.AppendRune(cur, r)
 			}
 		}
+		parts = append(parts, cur)
 		nameS := string(name)
-		valueS := string(value)
 		switch {
-		case valueS == "*":
-			if op != "=" {
-				return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "* value for non = op"}
-			}
-			filter = &Present{Attribute: nameS}
-		case hasStar:
-			if op != "=" {
-				return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "non equality substring match not allowed"}
-			}
-			// substring match
-			parts := strings.Split(valueS, "*")
-			filter = &Substrings{
-				Attribute: nameS,
-				Initial:   parts[0],
-				Final:     parts[len(parts)-1],
-				Any:       parts[1 : len(parts)-1],
-			}
-		default:
+		case stars == 0:
+			value := parts[0]
 			switch op {
 			case "=":
-				filter = &EqualityMatch{Attribute: nameS, Value: []byte(valueS)}
+				filter = &EqualityMatch{Attribute: nameS, Value: value}
 			case ">=":
-				filter = &GreaterOrEqual{Attribute: nameS, Value: []byte(valueS)}
+				filter = &GreaterOrEqual{Attribute: nameS, Value: value}
 			case "<=":
-				filter = &LessOrEqual{Attribute: nameS, Value: []byte(valueS)}
+				filter = &LessOrEqual{Attribute: nameS, Value: value}
 			case "~=":
-				filter = &ApproxMatch{Attribute: nameS, Value: []byte(valueS)}
+				filter = &ApproxMatch{Attribute: nameS, Value: value}
 			}
+		case op != "=":
+			return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "wildcard not allowed for non-equality match"}
+		case stars == 1 && len(parts[0]) == 0 && len(parts[1]) == 0:
+			// A lone unescaped '*' is a presence filter.
+			filter = &Present{Attribute: nameS}
+		default:
+			// substring match
+			sub := &Substrings{
+				Attribute: nameS,
+				Initial:   string(parts[0]),
+				Final:     string(parts[len(parts)-1]),
+			}
+			for _, p := range parts[1 : len(parts)-1] {
+				sub.Any = append(sub.Any, string(p))
+			}
+			filter = sub
 		}
 	}
 	if r := tok.next(); r != ')' {
@@ -419,6 +424,9 @@ func parseSearchFilter(pkt *Packet) (Filter, error) {
 		}
 		return fOr, nil
 	case filterTagNOT:
+		if len(pkt.Items) != 1 {
+			return nil, &ProtocolError{Reason: "search filter NOT must have exactly one child"}
+		}
 		f, err := parseSearchFilter(pkt.Items[0])
 		if err != nil {
 			return nil, err
@@ -429,6 +437,9 @@ func parseSearchFilter(pkt *Packet) (Filter, error) {
 	case filterTagEqualityMatch:
 		var ok bool
 		f := &EqualityMatch{}
+		if len(pkt.Items) != 2 {
+			return nil, &ProtocolError{Reason: "search filter equalityMatch must have two children"}
+		}
 		if f.Attribute, ok = pkt.Items[0].Str(); !ok {
 			return nil, &ProtocolError{Reason: "failed to parse equalityMatch.attribute in filter"}
 		}
@@ -439,6 +450,9 @@ func parseSearchFilter(pkt *Packet) (Filter, error) {
 	case filterTagSubstrings:
 		var ok bool
 		q := &Substrings{}
+		if len(pkt.Items) != 2 {
+			return nil, &ProtocolError{Reason: "search filter substrings must have two children"}
+		}
 		if q.Attribute, ok = pkt.Items[0].Str(); !ok {
 			return nil, &ProtocolError{Reason: "failed to parse substrings.attribute in filter"}
 		}
@@ -446,7 +460,7 @@ func parseSearchFilter(pkt *Packet) (Filter, error) {
 			switch c.Tag {
 			case 0: // initial
 				if i != 0 {
-					return nil, &ProtocolError{Reason: "search filter substrings has final as non-first child"}
+					return nil, &ProtocolError{Reason: "search filter substrings has initial as non-first child"}
 				}
 				var ok bool
 				if q.Initial, ok = c.Str(); !ok {
@@ -474,6 +488,9 @@ func parseSearchFilter(pkt *Packet) (Filter, error) {
 	case filterTagGreaterOrEqual:
 		var ok bool
 		f := &GreaterOrEqual{}
+		if len(pkt.Items) != 2 {
+			return nil, &ProtocolError{Reason: "search filter greaterOrEqual must have two children"}
+		}
 		if f.Attribute, ok = pkt.Items[0].Str(); !ok {
 			return nil, &ProtocolError{Reason: "failed to parse greaterOrEqual.attribute in filter"}
 		}
@@ -484,6 +501,9 @@ func parseSearchFilter(pkt *Packet) (Filter, error) {
 	case filterTagLessOrEqual:
 		var ok bool
 		f := &LessOrEqual{}
+		if len(pkt.Items) != 2 {
+			return nil, &ProtocolError{Reason: "search filter lessOrEqual must have two children"}
+		}
 		if f.Attribute, ok = pkt.Items[0].Str(); !ok {
 			return nil, &ProtocolError{Reason: "failed to parse lessOrEqual.attribute in filter"}
 		}
@@ -502,6 +522,9 @@ func parseSearchFilter(pkt *Packet) (Filter, error) {
 	case filterTagApproxMatch:
 		var ok bool
 		f := &ApproxMatch{}
+		if len(pkt.Items) != 2 {
+			return nil, &ProtocolError{Reason: "search filter approxMatch must have two children"}
+		}
 		if f.Attribute, ok = pkt.Items[0].Str(); !ok {
 			return nil, &ProtocolError{Reason: "failed to parse approxMatch.attribute in filter"}
 		}

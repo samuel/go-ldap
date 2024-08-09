@@ -28,7 +28,7 @@ func parseDeleteResponse(pkt *Packet) (*DeleteResponse, error) {
 
 func (r *DeleteResponse) WritePackets(w io.Writer, msgID int) error {
 	res := NewResponsePacket(msgID)
-	pkt := res.AddItem(r.BaseResponse.NewPacket())
+	pkt := res.AddItem(r.NewPacket())
 	pkt.Tag = ApplicationDelResponse
 	return res.Write(w)
 }

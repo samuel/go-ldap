@@ -45,7 +45,7 @@ func parseAddRequest(pkt *Packet) (*AddRequest, error) {
 
 func (r *AddResponse) WritePackets(w io.Writer, msgID int) error {
 	res := NewResponsePacket(msgID)
-	pkt := res.AddItem(r.BaseResponse.NewPacket())
+	pkt := res.AddItem(r.NewPacket())
 	pkt.Tag = ApplicationAddResponse
 	return res.Write(w)
 }

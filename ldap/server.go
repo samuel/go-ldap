@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"strings"
 	"time"
@@ -113,33 +113,44 @@ func NewServer(be Backend, tlsConfig *tls.Config) (*Server, error) {
 	}, nil
 }
 
-func (srv *Server) ServeTLS(network, addr string, tlsConfig *tls.Config) error {
+func (srv *Server) ServeTLS(ctx context.Context, network, addr string, tlsConfig *tls.Config) error {
 	if tlsConfig == nil {
 		tlsConfig = srv.tlsConfig
 	}
 	if tlsConfig == nil {
 		return errors.New("ldap: no TLS config")
 	}
-	ln, err := tls.Listen(network, addr, tlsConfig)
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, network, addr)
 	if err != nil {
 		return err
 	}
-	return srv.serve(ln)
+	return srv.serve(ctx, tls.NewListener(ln, tlsConfig))
 }
 
-func (srv *Server) Serve(network, addr string) error {
-	ln, err := net.Listen(network, addr)
+func (srv *Server) Serve(ctx context.Context, network, addr string) error {
+	var lc net.ListenConfig
+	ln, err := lc.Listen(ctx, network, addr)
 	if err != nil {
 		return err
 	}
-	return srv.serve(ln)
+	return srv.serve(ctx, ln)
 }
 
-func (srv *Server) serve(ln net.Listener) error {
+func (srv *Server) serve(ctx context.Context, ln net.Listener) error {
+	// Close the listener when the context is canceled so Accept unblocks and
+	// Serve returns.
+	go func() {
+		<-ctx.Done()
+		_ = ln.Close()
+	}()
 	for {
 		cn, err := ln.Accept()
 		if err != nil {
-			log.Printf("Accept failed: %+v", err)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			slog.Error("Accept failed", "err", err)
 			continue
 		}
 
@@ -148,27 +159,34 @@ func (srv *Server) serve(ln net.Listener) error {
 			wr:         bufio.NewWriter(cn),
 			srv:        srv,
 			remoteAddr: cn.RemoteAddr(),
-		}).serve()
+		}).serve(ctx)
 	}
 }
 
-func (cli *srvClient) serve() {
+func (cli *srvClient) serve(ctx context.Context) {
+	// Guard against panics (e.g. malformed input) taking down the whole server.
+	// Registered first so it unwinds last, after the connection has been closed.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("recovered from panic serving connection", "remoteAddr", cli.remoteAddr, "panic", r)
+		}
+	}()
+
 	state, err := cli.srv.Backend.Connect(cli.remoteAddr)
 	if err != nil {
 		if err := cli.cn.Close(); err != nil {
-			log.Printf("[%s] Failed to close client connection: %s", cli.remoteAddr, err)
+			slog.Error("Failed to close client connection", "remoteAddr", cli.remoteAddr, "err", err)
 		}
 		return
 	}
 	cli.state = state
 
-	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	defer func() {
 		if err := cli.cn.Close(); err != nil {
-			log.Printf("[%s] Failed to close client connection: %s", cli.remoteAddr, err)
+			slog.Error("Failed to close client connection", "remoteAddr", cli.remoteAddr, "err", err)
 		}
 		if cli.state != nil {
 			cli.srv.Backend.Disconnect(state)
@@ -176,15 +194,19 @@ func (cli *srvClient) serve() {
 	}()
 
 	for {
+		// Timeout idle connections after 15 minutes.
+		if err := cli.cn.SetReadDeadline(time.Now().Add(time.Minute * 15)); err != nil {
+			slog.Error("Failed to set read deadline", "remoteAddr", cli.remoteAddr, "err", err)
+		}
 		pkt, _, err := ReadPacket(cli.cn)
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
-				log.Printf("[%s] ReadPacket failed: %s", cli.remoteAddr, err)
+				slog.Error("ReadPacket failed", "remoteAddr", cli.remoteAddr, "err", err)
 			}
 			return
 		}
 		if pkt.Class != ClassUniversal || pkt.Primitive || pkt.Tag != TagSequence || len(pkt.Items) < 2 {
-			log.Printf("[%s] Unknown classtype, tagtype, tag, or too few items", cli.remoteAddr)
+			slog.Warn("Unknown class, primitive, tag, or too few items", "remoteAddr", cli.remoteAddr)
 			return
 		}
 
@@ -192,46 +214,54 @@ func (cli *srvClient) serve() {
 
 		msgID, ok := pkt.Items[0].Int()
 		if !ok {
-			log.Printf("Failed to read MessageID")
+			slog.Warn("Failed to read MessageID", "remoteAddr", cli.remoteAddr)
 			return
 		}
 
-		// TODO: parse rest of packet: control
+		// The optional controls element is [0] Controls following the protocolOp.
 		// https://ldapwiki.com/wiki/SupportedControl
-		// 1.2.840.113556.1.4.319
-		//   https://ldapwiki.com/wiki/Simple%20Paged%20Results%20Control
-		//   https://oidref.com/1.2.840.113556.1.4.319
+		var controlsPkt *Packet
+		if len(pkt.Items) > 2 {
+			if cp := pkt.Items[2]; cp.Class == ClassContext && cp.Tag == 0 && !cp.Primitive {
+				controlsPkt = cp
+			}
+		}
 
-		if err := cli.processRequest(ctx, msgID, pkt.Items[1]); err != nil {
+		if err := cli.processRequest(ctx, msgID, pkt.Items[1], controlsPkt); err != nil {
 			end := true
 			if !errors.Is(err, io.EOF) {
-				log.Printf("[%s] Processing of request failed: %s", cli.remoteAddr, err)
+				slog.Error("Processing of request failed", "remoteAddr", cli.remoteAddr, "err", err)
+				respTag, hasResp := applicationResponseTag[pkt.Items[1].Tag]
 				res := &BaseResponse{
-					MessageType: pkt.Items[1].Tag + 1,
+					MessageType: respTag,
 					Code:        ResultOther,
 					Message:     "ERROR",
 				}
-				if e, ok := errorAsType[*ProtocolError](err); ok {
+				if e, ok := errors.AsType[*ProtocolError](err); ok {
 					res.Code = ResultProtocolError
 					res.Message = e.Reason
 					end = false
-				} else if e, ok := errorAsType[*UnsupportedRequestTagError](err); ok {
+				} else if e, ok := errors.AsType[*UnsupportedRequestTagError](err); ok {
 					res.Code = ResultUnwillingToPerform
 					res.Message = fmt.Sprintf("unsupported request tag %d", e.Tag)
 					end = false
 				}
-				if err := cli.cn.SetWriteDeadline(time.Now().Add(cli.srv.responseTimeout)); err != nil {
-					log.Printf("[%s] Failed to set write deadline: %s", cli.remoteAddr, err)
-					end = true
-				} else if err := res.WritePackets(cli.wr, msgID); err != nil {
-					log.Printf("[%s] Failed to write error response: %s", cli.remoteAddr, err)
-					end = true
-				} else if err := cli.wr.Flush(); err != nil {
-					log.Printf("[%s] Failed to flush: %s", cli.remoteAddr, err)
-					end = true
-				} else if err := cli.cn.SetWriteDeadline(time.Time{}); err != nil {
-					log.Printf("[%s] Failed to clear write deadline: %s", cli.remoteAddr, err)
-					end = true
+				// Only send a response for operations that define one. Requests
+				// such as Abandon have no response and must not be answered.
+				if hasResp {
+					if err := cli.cn.SetWriteDeadline(time.Now().Add(cli.srv.responseTimeout)); err != nil {
+						slog.Error("Failed to set write deadline", "remoteAddr", cli.remoteAddr, "err", err)
+						end = true
+					} else if err := res.WritePackets(cli.wr, msgID); err != nil {
+						slog.Error("Failed to write error response", "remoteAddr", cli.remoteAddr, "err", err)
+						end = true
+					} else if err := cli.wr.Flush(); err != nil {
+						slog.Error("Failed to flush", "remoteAddr", cli.remoteAddr, "err", err)
+						end = true
+					} else if err := cli.cn.SetWriteDeadline(time.Time{}); err != nil {
+						slog.Error("Failed to clear write deadline", "remoteAddr", cli.remoteAddr, "err", err)
+						end = true
+					}
 				}
 			}
 			if end {
@@ -242,9 +272,27 @@ func (cli *srvClient) serve() {
 }
 
 // return an error when the client connection should be closed
-func (cli *srvClient) processRequest(ctx context.Context, msgID int, pkt *Packet) error {
+func (cli *srvClient) processRequest(ctx context.Context, msgID int, pkt, controlsPkt *Packet) error {
 	ctx, cancel := context.WithTimeout(ctx, cli.srv.processingTimeout)
 	defer cancel()
+
+	controls, err := parseControls(controlsPkt)
+	if err != nil {
+		return err
+	}
+	// RFC 4511 4.1.11: a control marked critical that the server does not
+	// recognize means the operation must not be performed; reject it with
+	// unavailableCriticalExtension. Operations without a response (Unbind,
+	// Abandon) cannot carry the error, so fall through and handle normally.
+	if oid, ok := unsupportedCriticalControl(controls); ok {
+		if respTag, hasResp := applicationResponseTag[pkt.Tag]; hasResp {
+			return cli.writeResponse(msgID, &BaseResponse{
+				MessageType: respTag,
+				Code:        ResultUnavailableCriticalExtension,
+				Message:     "unsupported critical control: " + oid,
+			})
+		}
+	}
 
 	// TODO: use context for deadlines and cancellations
 	var res Response
@@ -387,18 +435,25 @@ func (cli *srvClient) processRequest(ctx context.Context, msgID int, pkt *Packet
 			}
 		}
 	}
+	if res == nil {
+		return cli.wr.Flush()
+	}
+	return cli.writeResponse(msgID, res)
+}
+
+// writeResponse writes a single response message to the client under the
+// configured response timeout.
+func (cli *srvClient) writeResponse(msgID int, res Response) error {
 	if err := cli.cn.SetWriteDeadline(time.Now().Add(cli.srv.responseTimeout)); err != nil {
 		return fmt.Errorf("failed to set deadline for write: %w", err)
 	}
 	defer func() {
 		if err := cli.cn.SetWriteDeadline(time.Time{}); err != nil {
-			log.Printf("failed to clear deadline for write: %s", err)
+			slog.Error("failed to clear deadline for write", "err", err)
 		}
 	}()
-	if res != nil {
-		if err := res.WritePackets(cli.wr, msgID); err != nil {
-			return err
-		}
+	if err := res.WritePackets(cli.wr, msgID); err != nil {
+		return err
 	}
 	return cli.wr.Flush()
 }
@@ -410,8 +465,14 @@ func (cli *srvClient) rootDSE(req *SearchRequest) (*SearchResponse, error) {
 		r.Attributes["objectClass"] = [][]byte{[]byte("top")}
 		return res, nil
 	}
+	// Attribute descriptions are case-insensitive, but req.Attributes holds them
+	// verbatim as sent by the client. Normalize to lower case for matching.
+	requested := make(map[string]bool, len(req.Attributes))
+	for a := range req.Attributes {
+		requested[strings.ToLower(a)] = true
+	}
 	for name, vals := range cli.srv.RootDSE {
-		if req.Attributes["+"] || req.Attributes[strings.ToLower(name)] {
+		if requested["+"] || requested[strings.ToLower(name)] {
 			r.Attributes[name] = make([][]byte, len(vals))
 			for i, v := range vals {
 				r.Attributes[name][i] = []byte(v)

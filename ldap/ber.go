@@ -1,14 +1,12 @@
 package ldap
 
-// TODO: handle negative integers properly
-
 import (
 	"bytes"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -110,11 +108,11 @@ type Packet struct {
 	Class     Class
 	Primitive bool // true=primitive, false=constructed
 	Tag       int
-	Value     interface{}
+	Value     any
 	Items     []*Packet
 }
 
-func NewPacket(class Class, primitive bool, tag int, value interface{}) *Packet {
+func NewPacket(class Class, primitive bool, tag int, value any) *Packet {
 	return &Packet{
 		Class:     class,
 		Primitive: primitive,
@@ -133,11 +131,11 @@ func ReadPacket(rd io.Reader) (*Packet, int, error) {
 	}); ok {
 		// Give 5 seconds to read entire body after first bytes.
 		if err := cn.SetReadDeadline(time.Now().Add(time.Second * 5)); err != nil {
-			log.Printf("Failed to set read deadline: %s", err)
+			slog.Error("Failed to set read deadline", "err", err)
 		}
 		defer func() {
 			if err := cn.SetReadDeadline(time.Time{}); err != nil {
-				log.Printf("Failed to clear read deadline: %s", err)
+				slog.Error("Failed to clear read deadline", "err", err)
 			}
 		}()
 	}
@@ -158,7 +156,7 @@ func ReadPacket(rd io.Reader) (*Packet, int, error) {
 		for i := 2; i < 2+nl; i++ {
 			dataLen = (dataLen << 8) | int(buf[i])
 		}
-		if dataLen > maxPacketSize {
+		if dataLen < 0 || dataLen > maxPacketSize {
 			return nil, 2 + nl, InvalidBEREncodingError("ldap: packet larger than max allowed size")
 		}
 	}
@@ -199,7 +197,7 @@ func ParsePacket(buf []byte) (*Packet, int, error) {
 		for i := 2; i < 2+n; i++ {
 			dataLen = (dataLen << 8) | int(buf[i])
 		}
-		if dataLen > maxPacketSize {
+		if dataLen < 0 || dataLen > maxPacketSize {
 			return nil, hdr, InvalidBEREncodingError("ldap: packet larger than max allowed size")
 		}
 	}
@@ -274,14 +272,13 @@ func (p *Packet) Str() (string, bool) {
 	return "", false
 }
 
-// TODO: handle negatives properly.
+// intSize returns the minimal number of bytes needed to encode v as a
+// two's-complement big-endian integer (always at least 1).
 func intSize(v int64) int {
-	n := 0
-	for x := uint64(v); x != 0; x >>= 8 {
+	n := 1
+	for v > 127 || v < -128 {
 		n++
-	}
-	if n == 0 {
-		return 1
+		v >>= 8
 	}
 	return n
 }
@@ -383,19 +380,11 @@ func (p *Packet) write(w io.Writer, b []byte) error {
 				return err
 			}
 		case int:
-			n := 0
-			if v == 0 {
-				n = 1
-				b[0] = 0
-			} else {
-				for x := v; x > 0; x >>= 8 {
-					n++
-				}
-				s := uint((n - 1) * 8)
-				for i := range n {
-					b[i] = byte(v >> s & 0xff)
-					s -= 8
-				}
+			n := intSize(int64(v))
+			s := uint((n - 1) * 8)
+			for i := range n {
+				b[i] = byte(int64(v) >> s)
+				s -= 8
 			}
 			if _, err := w.Write(b[:n]); err != nil {
 				return err
@@ -453,7 +442,7 @@ func (p *Packet) format(w io.Writer, indent string) error {
 			if _, err := fmt.Fprintf(w, " Len:%d\n", len(b)); err != nil {
 				return err
 			}
-			for _, s := range strings.Split(hex.Dump(b), "\n") {
+			for s := range strings.SplitSeq(hex.Dump(b), "\n") {
 				if s != "" {
 					if _, err := fmt.Fprintf(w, "%s %s\n", indent, s); err != nil {
 						return err
@@ -477,7 +466,7 @@ func (p *Packet) format(w io.Writer, indent string) error {
 	return nil
 }
 
-func parseValue(tag int, data []byte) (interface{}, error) {
+func parseValue(tag int, data []byte) (any, error) {
 	switch tag {
 	default:
 		return data, nil
@@ -487,12 +476,15 @@ func parseValue(tag int, data []byte) (interface{}, error) {
 		}
 		return data[0] != 0, nil
 	case TagInteger, TagEnumerated:
-		// TODO: handle negatives properly
-		i := 0
-		for _, b := range data {
-			i = (i << 8) | int(b)
+		if len(data) == 0 {
+			return 0, nil
 		}
-		return i, nil
+		// Sign-extend the first byte so two's-complement negatives decode correctly.
+		i := int64(int8(data[0]))
+		for _, b := range data[1:] {
+			i = (i << 8) | int64(b)
+		}
+		return int(i), nil
 	case TagPrintableString:
 		// Treat this as ASCII rather than UTF-8
 		runes := make([]rune, len(data))

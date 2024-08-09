@@ -1,6 +1,7 @@
 package ldapcmd
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
@@ -26,7 +27,7 @@ var (
 
 // Connect connects to the LDAP server. flag.Parse must
 // have been called first.
-func Connect() (*ldap.Client, error) {
+func Connect(ctx context.Context) (*ldap.Client, error) {
 	addr := *flagHost
 	enableTLS := false
 	if *flagURI != "" {
@@ -53,16 +54,16 @@ func Connect() (*ldap.Client, error) {
 		conf := &tls.Config{
 			InsecureSkipVerify: *flagInsecure,
 		}
-		cli, err = ldap.DialTLS("tcp", addr, conf)
+		cli, err = ldap.DialTLS(ctx, "tcp", addr, conf)
 	} else {
-		cli, err = ldap.Dial("tcp", addr)
+		cli, err = ldap.Dial(ctx, "tcp", addr)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to server: %w", err)
 	}
 
 	if !enableTLS && *flagStartTLS {
-		err := cli.StartTLS(&tls.Config{
+		err := cli.StartTLS(ctx, &tls.Config{
 			InsecureSkipVerify: *flagInsecure,
 		})
 		if err != nil {
@@ -81,7 +82,7 @@ func Connect() (*ldap.Client, error) {
 		} else {
 			pass = []byte(*flagBindPass)
 		}
-		if err := cli.Bind(*flagBindDN, pass); err != nil {
+		if err := cli.Bind(ctx, *flagBindDN, pass); err != nil {
 			return nil, fmt.Errorf("bind failed: %w", err)
 		}
 	}

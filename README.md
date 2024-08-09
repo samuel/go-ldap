@@ -11,6 +11,7 @@ Lightweight Directory Access Protocol (LDAP): RFCs
 - [rfc4512](https://tools.ietf.org/html/rfc4512) - Directory Information Models
 - [rfc4513](https://tools.ietf.org/html/rfc4513) - Authentication Methods and Security Mechanisms
 - [rfc4514](https://tools.ietf.org/html/rfc4514) - String Representation of Distinguished Names
+- [rfc4515](https://tools.ietf.org/html/rfc4515) - String Representation of Search Filters
 - [rfc4519](https://tools.ietf.org/html/rfc4519) - Schema for User Applications
 
 License

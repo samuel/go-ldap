@@ -1,9 +1,10 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -24,7 +25,6 @@ var scopes = map[string]ldap.Scope{
 }
 
 func main() {
-	log.SetFlags(0)
 	flag.Parse()
 
 	req := &ldap.SearchRequest{
@@ -40,7 +40,8 @@ func main() {
 			n++
 			f, err := ldap.ParseFilter(s)
 			if err != nil {
-				log.Fatalf("Failed to parse filter '%s': %s", s, err.Error())
+				slog.Error("Failed to parse filter", "filter", s, "err", err)
+				os.Exit(1)
 			}
 			req.Filter = f
 		}
@@ -56,17 +57,21 @@ func main() {
 	var ok bool
 	req.Scope, ok = scopes[*flagScope]
 	if !ok {
-		log.Fatalf("Unknown scope %s", *flagScope)
+		slog.Error("Unknown scope", "scope", *flagScope)
+		os.Exit(1)
 	}
 
-	cli, err := ldapcmd.Connect()
+	ctx := context.Background()
+	cli, err := ldapcmd.Connect(ctx)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("failed to connect", "err", err)
+		os.Exit(1)
 	}
 
-	res, err := cli.Search(req)
+	res, err := cli.Search(ctx, req)
 	if err != nil {
-		log.Fatalf("Search failed: %s", err.Error())
+		slog.Error("Search failed", "err", err)
+		os.Exit(1)
 	}
 	for i, r := range res {
 		if i != 0 {

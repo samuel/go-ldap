@@ -8,7 +8,7 @@ import (
 
 // State is passed created by and passed back to a server backend to provide
 // state for a client connection.
-type State interface{}
+type State any
 
 // Backend is implemented by an LDAP database to provide the backing store.
 type Backend interface {
@@ -88,7 +88,7 @@ func (debugBackend) Search(ctx context.Context, state State, req *SearchRequest)
 	fmt.Printf("SEARCH %+v\n", req)
 	return &SearchResponse{
 		BaseResponse: BaseResponse{
-			Code:      ResultSuccess, //LDAPResultNoSuchObject,
+			Code:      ResultSuccess, // LDAPResultNoSuchObject,
 			MatchedDN: "",
 			Message:   "",
 		},

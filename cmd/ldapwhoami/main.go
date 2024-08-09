@@ -1,25 +1,29 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
+	"os"
 
 	"github.com/samuel/go-ldap/cmd/internal/ldapcmd"
 )
 
 func main() {
-	log.SetFlags(0)
 	flag.Parse()
 
-	cli, err := ldapcmd.Connect()
+	ctx := context.Background()
+	cli, err := ldapcmd.Connect(ctx)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("failed to connect", "err", err)
+		os.Exit(1)
 	}
 
-	id, err := cli.WhoAmI()
+	id, err := cli.WhoAmI(ctx)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("whoami failed", "err", err)
+		os.Exit(1)
 	}
 	fmt.Println(id)
 }

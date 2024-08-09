@@ -9,13 +9,14 @@ type ExtendedRequest struct {
 
 type ExtendedResponse struct {
 	BaseResponse
+
 	Name  string
 	Value []byte
 }
 
 func (r *ExtendedResponse) WritePackets(w io.Writer, msgID int) error {
 	res := NewResponsePacket(msgID)
-	pkt := res.AddItem(r.BaseResponse.NewPacket())
+	pkt := res.AddItem(r.NewPacket())
 	pkt.Tag = ApplicationExtendedResponse
 	if r.Name != "" {
 		pkt.AddItem(NewPacket(ClassContext, true, 10, r.Name))

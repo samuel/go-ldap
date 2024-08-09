@@ -110,6 +110,7 @@ func (r *SearchResult) ToLDIF(w io.Writer) error {
 
 type SearchResponse struct {
 	BaseResponse
+
 	Results []*SearchResult
 }
 
@@ -133,11 +134,8 @@ func (r *SearchResponse) WritePackets(w io.Writer, msgID int) error {
 		}
 	}
 	top.Items = top.Items[:1]
-	pkt := top.AddItem(r.BaseResponse.NewPacket())
+	pkt := top.AddItem(r.NewPacket())
 	pkt.Tag = ApplicationSearchResultDone
-	if len(r.Results) == 0 && r.BaseResponse.Code == ResultSuccess {
-		r.BaseResponse.Code = ResultNoSuchObject
-	}
 	return top.Write(w)
 }
 
@@ -190,7 +188,7 @@ func parseSearchRequest(pkt *Packet) (*SearchRequest, error) {
 		return nil, &ProtocolError{Reason: "can't parse sizeLimit for search request"}
 	}
 	if req.TimeLimit, ok = pkt.Items[4].Int(); !ok {
-		return nil, &ProtocolError{Reason: "can't parse sizeLimit for search request"}
+		return nil, &ProtocolError{Reason: "can't parse timeLimit for search request"}
 	}
 	if req.TypesOnly, ok = pkt.Items[5].Bool(); !ok {
 		return nil, &ProtocolError{Reason: "can't parse typesOnly for search request"}

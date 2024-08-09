@@ -99,7 +99,7 @@ func (r *ModifyRequest) WritePackets(w io.Writer, msgID int) error {
 
 func (r *ModifyResponse) WritePackets(w io.Writer, msgID int) error {
 	res := NewResponsePacket(msgID)
-	pkt := res.AddItem(r.BaseResponse.NewPacket())
+	pkt := res.AddItem(r.NewPacket())
 	pkt.Tag = ApplicationModifyResponse
 	return res.Write(w)
 }

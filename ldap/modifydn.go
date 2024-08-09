@@ -42,7 +42,7 @@ func parseModifyDNRequest(pkt *Packet) (*ModifyDNRequest, error) {
 
 func (r *ModifyDNResponse) WritePackets(w io.Writer, msgID int) error {
 	res := NewResponsePacket(msgID)
-	pkt := res.AddItem(r.BaseResponse.NewPacket())
+	pkt := res.AddItem(r.NewPacket())
 	pkt.Tag = ApplicationModifyDNResponse
 	return res.Write(w)
 }

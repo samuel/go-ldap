@@ -41,7 +41,7 @@ func parseBindResponse(pkt *Packet) (*BindResponse, error) {
 
 func (r *BindResponse) WritePackets(w io.Writer, msgID int) error {
 	res := NewResponsePacket(msgID)
-	pkt := res.AddItem(r.BaseResponse.NewPacket())
+	pkt := res.AddItem(r.NewPacket())
 	pkt.Tag = ApplicationBindResponse
 	return res.Write(w)
 }
