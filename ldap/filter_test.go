@@ -3,6 +3,7 @@ package ldap
 import "testing"
 
 func TestParseFilter(t *testing.T) {
+	t.Parallel()
 	cases := []string{
 		"(present=*)",
 		"(less<=123)",
@@ -27,6 +28,7 @@ func TestParseFilter(t *testing.T) {
 }
 
 func TestFilterEncoding(t *testing.T) {
+	t.Parallel()
 	cases := []Filter{
 		&Present{
 			Attribute: "attr",

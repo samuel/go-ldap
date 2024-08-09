@@ -32,7 +32,7 @@ func Connect() (*ldap.Client, error) {
 	if *flagURI != "" {
 		u, err := url.Parse(*flagURI)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to parse URI %s: %s", *flagURI, err.Error())
+			return nil, fmt.Errorf("failed to parse URI %s: %s", *flagURI, err.Error())
 		}
 		if u.Scheme == "ldaps" {
 			enableTLS = true

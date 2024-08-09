@@ -58,20 +58,20 @@ func (r *BaseResponse) NewPacket() *Packet {
 
 func parseBaseResponse(pkt *Packet, res *BaseResponse) error {
 	if len(pkt.Items) < 3 {
-		return ProtocolError("base response should have at least 3 values")
+		return &ProtocolError{Reason: "base response should have at least 3 values"}
 	}
 	code, ok := pkt.Items[0].Int()
 	if !ok {
-		return ProtocolError("invalid code in response")
+		return &ProtocolError{Reason: "invalid code in response"}
 	}
 	res.Code = ResultCode(code)
 	res.MatchedDN, ok = pkt.Items[1].Str()
 	if !ok {
-		return ProtocolError("invalid matchedDN in response")
+		return &ProtocolError{Reason: "invalid matchedDN in response"}
 	}
 	res.Message, ok = pkt.Items[2].Str()
 	if !ok {
-		return ProtocolError("invalid message in response")
+		return &ProtocolError{Reason: "invalid message in response"}
 	}
 	return nil
 }
@@ -88,10 +88,11 @@ type Server struct {
 }
 
 type srvClient struct {
-	cn    net.Conn
-	wr    *bufio.Writer
-	srv   *Server
-	state State
+	cn         net.Conn
+	wr         *bufio.Writer
+	srv        *Server
+	state      State
+	remoteAddr net.Addr
 }
 
 func NewServer(be Backend, tlsConfig *tls.Config) (*Server, error) {
@@ -143,17 +144,20 @@ func (srv *Server) serve(ln net.Listener) error {
 		}
 
 		go (&srvClient{
-			cn:  cn,
-			wr:  bufio.NewWriter(cn),
-			srv: srv,
+			cn:         cn,
+			wr:         bufio.NewWriter(cn),
+			srv:        srv,
+			remoteAddr: cn.RemoteAddr(),
 		}).serve()
 	}
 }
 
 func (cli *srvClient) serve() {
-	state, err := cli.srv.Backend.Connect(cli.cn.RemoteAddr())
+	state, err := cli.srv.Backend.Connect(cli.remoteAddr)
 	if err != nil {
-		cli.cn.Close()
+		if err := cli.cn.Close(); err != nil {
+			log.Printf("[%s] Failed to close client connection: %s", cli.remoteAddr, err)
+		}
 		return
 	}
 	cli.state = state
@@ -163,24 +167,24 @@ func (cli *srvClient) serve() {
 	defer cancel()
 
 	defer func() {
-		cli.cn.Close()
+		if err := cli.cn.Close(); err != nil {
+			log.Printf("[%s] Failed to close client connection: %s", cli.remoteAddr, err)
+		}
 		if cli.state != nil {
 			cli.srv.Backend.Disconnect(state)
 		}
 	}()
 
 	for {
-		// TODO: create a subcontext with a deadline
-
 		pkt, _, err := ReadPacket(cli.cn)
 		if err != nil {
-			if err != io.EOF {
-				log.Printf("ReadPacket failed from %s: %s", cli.cn.RemoteAddr(), err)
+			if !errors.Is(err, io.EOF) {
+				log.Printf("[%s] ReadPacket failed: %s", cli.remoteAddr, err)
 			}
 			return
 		}
 		if pkt.Class != ClassUniversal || pkt.Primitive || pkt.Tag != TagSequence || len(pkt.Items) < 2 {
-			log.Print("Unknown classtype, tagtype, tag, or too few items")
+			log.Printf("[%s] Unknown classtype, tagtype, tag, or too few items", cli.remoteAddr)
 			return
 		}
 
@@ -200,34 +204,33 @@ func (cli *srvClient) serve() {
 
 		if err := cli.processRequest(ctx, msgID, pkt.Items[1]); err != nil {
 			end := true
-			if err != io.EOF {
-				log.Printf("Processing of request failed: %s", err)
+			if !errors.Is(err, io.EOF) {
+				log.Printf("[%s] Processing of request failed: %s", cli.remoteAddr, err)
 				res := &BaseResponse{
 					MessageType: pkt.Items[1].Tag + 1,
 					Code:        ResultOther,
 					Message:     "ERROR",
 				}
-				switch e := err.(type) {
-				case ProtocolError:
+				if e, ok := errorAsType[*ProtocolError](err); ok {
 					res.Code = ResultProtocolError
-					res.Message = string(e)
+					res.Message = e.Reason
 					end = false
-				case UnsupportedRequestTagError:
+				} else if e, ok := errorAsType[*UnsupportedRequestTagError](err); ok {
 					res.Code = ResultUnwillingToPerform
-					res.Message = fmt.Sprintf("unsupported request tag %d", int(e))
+					res.Message = fmt.Sprintf("unsupported request tag %d", e.Tag)
 					end = false
 				}
 				if err := cli.cn.SetWriteDeadline(time.Now().Add(cli.srv.responseTimeout)); err != nil {
-					log.Printf("Failed to set write deadline: %s", err)
+					log.Printf("[%s] Failed to set write deadline: %s", cli.remoteAddr, err)
 					end = true
 				} else if err := res.WritePackets(cli.wr, msgID); err != nil {
-					log.Printf("Failed to write error response to %s: %s", cli.cn.RemoteAddr(), err)
+					log.Printf("[%s] Failed to write error response: %s", cli.remoteAddr, err)
 					end = true
 				} else if err := cli.wr.Flush(); err != nil {
-					log.Printf("Failed to flush: %s", err)
+					log.Printf("[%s] Failed to flush: %s", cli.remoteAddr, err)
 					end = true
 				} else if err := cli.cn.SetWriteDeadline(time.Time{}); err != nil {
-					log.Printf("Failed to clear write deadline: %s", err)
+					log.Printf("[%s] Failed to clear write deadline: %s", cli.remoteAddr, err)
 					end = true
 				}
 			}
@@ -248,7 +251,7 @@ func (cli *srvClient) processRequest(ctx context.Context, msgID int, pkt *Packet
 	switch pkt.Tag {
 	default:
 		// _ = pkt.Format(os.Stdout)
-		return UnsupportedRequestTagError(pkt.Tag)
+		return &UnsupportedRequestTagError{Tag: pkt.Tag}
 	case ApplicationUnbindRequest:
 		return io.EOF
 	case ApplicationBindRequest:

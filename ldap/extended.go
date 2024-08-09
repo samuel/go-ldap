@@ -50,15 +50,15 @@ func parseExtendedResponse(pkt *Packet) (*ExtendedResponse, error) {
 		case 10:
 			res.Name, ok = it.Str()
 			if !ok {
-				return nil, ProtocolError("invalid extended response oid")
+				return nil, &ProtocolError{Reason: "invalid extended response oid"}
 			}
 		case 11:
 			res.Value, ok = it.Bytes()
 			if !ok {
-				return nil, ProtocolError("invalid extended response value")
+				return nil, &ProtocolError{Reason: "invalid extended response value"}
 			}
 		default:
-			return nil, ProtocolError("unsupported extended response tag")
+			return nil, &ProtocolError{Reason: "unsupported extended response tag"}
 		}
 	}
 	return res, nil
@@ -68,22 +68,22 @@ func parseExtendedRequest(pkt *Packet) (*ExtendedRequest, error) {
 	var ok bool
 	req := &ExtendedRequest{}
 	if len(pkt.Items) > 2 {
-		return nil, ProtocolError("too many tags for extended request")
+		return nil, &ProtocolError{Reason: "too many tags for extended request"}
 	}
 	for _, it := range pkt.Items {
 		switch it.Tag {
 		case 0:
 			req.Name, ok = it.Str()
 			if !ok {
-				return nil, ProtocolError("invalid extended request oid")
+				return nil, &ProtocolError{Reason: "invalid extended request oid"}
 			}
 		case 1:
 			req.Value, ok = it.Bytes()
 			if !ok {
-				return nil, ProtocolError("invalid extended request value")
+				return nil, &ProtocolError{Reason: "invalid extended request value"}
 			}
 		default:
-			return nil, ProtocolError("unsupported extended request tag")
+			return nil, &ProtocolError{Reason: "unsupported extended request tag"}
 		}
 	}
 	return req, nil
@@ -107,20 +107,20 @@ func parsePasswordModifyRequest(pkt *Packet) (*PasswordModifyRequest, error) {
 		case 0:
 			req.UserIdentity, ok = it.Str()
 			if !ok {
-				return nil, ProtocolError("invalid user identity tag")
+				return nil, &ProtocolError{Reason: "invalid user identity tag"}
 			}
 		case 1:
 			req.OldPassword, ok = it.Bytes()
 			if !ok {
-				return nil, ProtocolError("invalid old password tag")
+				return nil, &ProtocolError{Reason: "invalid old password tag"}
 			}
 		case 2:
 			req.NewPassword, ok = it.Bytes()
 			if !ok {
-				return nil, ProtocolError("invalid new password tag")
+				return nil, &ProtocolError{Reason: "invalid new password tag"}
 			}
 		default:
-			return nil, ProtocolError("unknown tag")
+			return nil, &ProtocolError{Reason: "unknown tag"}
 		}
 	}
 	return req, nil

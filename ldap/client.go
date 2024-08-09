@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 )
 
-// ErrAlreadyTLS is returned when trying to start a TLS connection when the connection is already using TLS
+// ErrAlreadyTLS is returned when trying to start a TLS connection when the connection is already using TLS.
 var ErrAlreadyTLS = errors.New("ldap: connection already using TLS")
 
 func NewRequestPacket(msgID int) *Packet {
@@ -100,12 +100,12 @@ func (c *Client) start() {
 				break
 			}
 			if pkt.Class != ClassUniversal || pkt.Primitive || pkt.Tag != TagSequence || len(pkt.Items) < 2 {
-				e = ProtocolError("invalid response packet")
+				e = &ProtocolError{Reason: "invalid response packet"}
 				break
 			}
 			msgID, ok := pkt.Items[0].Int()
 			if !ok {
-				e = ProtocolError("failed to parse msgID from response")
+				e = &ProtocolError{Reason: "failed to parse msgID from response"}
 				break
 			}
 			c.mu.Lock()
@@ -177,7 +177,7 @@ func (c *Client) request(req Request) (*Packet, error) {
 	return r.pkt, r.err
 }
 
-// Close closes the underlying connection to the server
+// Close closes the underlying connection to the server.
 func (c *Client) Close() error {
 	return c.cn.Close()
 }
@@ -241,7 +241,7 @@ func (c *Client) Bind(dn string, pass []byte) error {
 	return res.BaseResponse.Err()
 }
 
-// Delete a node
+// Delete a node.
 func (c *Client) Delete(dn string) error {
 	pkt, err := c.request(&DeleteRequest{
 		DN: dn,
@@ -290,7 +290,7 @@ func (c *Client) Search(req *SearchRequest) ([]*SearchResult, error) {
 			}
 			return results, res.Err()
 		default:
-			return results, ProtocolError("unexpected tag for search response")
+			return results, &ProtocolError{Reason: "unexpected tag for search response"}
 		}
 	}
 }

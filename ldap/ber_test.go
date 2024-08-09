@@ -7,6 +7,7 @@ import (
 )
 
 func TestIntSize(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Int  int64
 		Size int
@@ -26,6 +27,7 @@ func TestIntSize(t *testing.T) {
 }
 
 func TestEncodeDecode(t *testing.T) {
+	t.Parallel()
 	var tests []*Packet
 
 	pkt := NewPacket(ClassUniversal, false, TagSequence, nil)

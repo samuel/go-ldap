@@ -1,9 +1,14 @@
-package ldap
+package ldap_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/samuel/go-ldap/ldap"
+)
 
 func TestClientBind(t *testing.T) {
-	c, err := Dial("tcp", "127.0.0.1:1389")
+	t.Parallel()
+	c, err := ldap.Dial("tcp", "127.0.0.1:1389")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -16,7 +21,8 @@ func TestClientBind(t *testing.T) {
 }
 
 func TestClientDelete(t *testing.T) {
-	c, err := Dial("tcp", "127.0.0.1:1389")
+	t.Parallel()
+	c, err := ldap.Dial("tcp", "127.0.0.1:1389")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,12 +32,13 @@ func TestClientDelete(t *testing.T) {
 }
 
 func TestClientSearch(t *testing.T) {
-	c, err := Dial("tcp", "127.0.0.1:1389")
+	t.Parallel()
+	c, err := ldap.Dial("tcp", "127.0.0.1:1389")
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := &SearchRequest{
-		Scope: ScopeWholeSubtree,
+	req := &ldap.SearchRequest{
+		Scope: ldap.ScopeWholeSubtree,
 	}
 	if res, err := c.Search(req); err != nil {
 		t.Fatal(err)

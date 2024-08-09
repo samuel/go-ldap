@@ -10,24 +10,24 @@ import (
 // state for a client connection.
 type State interface{}
 
-// Backend is implemented by an LDAP database to provide the backing store
+// Backend is implemented by an LDAP database to provide the backing store.
 type Backend interface {
-	Add(context.Context, State, *AddRequest) (*AddResponse, error)
-	Bind(context.Context, State, *BindRequest) (*BindResponse, error)
+	Add(ctx context.Context, state State, req *AddRequest) (*AddResponse, error)
+	Bind(ctx context.Context, state State, req *BindRequest) (*BindResponse, error)
 	Connect(remoteAddr net.Addr) (State, error)
-	Delete(context.Context, State, *DeleteRequest) (*DeleteResponse, error)
-	Disconnect(State)
-	ExtendedRequest(context.Context, State, *ExtendedRequest) (*ExtendedResponse, error)
-	Modify(context.Context, State, *ModifyRequest) (*ModifyResponse, error)
-	ModifyDN(context.Context, State, *ModifyDNRequest) (*ModifyDNResponse, error)
-	PasswordModify(context.Context, State, *PasswordModifyRequest) ([]byte, error)
-	Search(context.Context, State, *SearchRequest) (*SearchResponse, error)
-	Whoami(context.Context, State) (string, error)
+	Delete(ctx context.Context, state State, req *DeleteRequest) (*DeleteResponse, error)
+	Disconnect(state State)
+	ExtendedRequest(ctx context.Context, state State, req *ExtendedRequest) (*ExtendedResponse, error)
+	Modify(ctx context.Context, state State, req *ModifyRequest) (*ModifyResponse, error)
+	ModifyDN(ctx context.Context, state State, req *ModifyDNRequest) (*ModifyDNResponse, error)
+	PasswordModify(ctx context.Context, state State, req *PasswordModifyRequest) ([]byte, error)
+	Search(ctx context.Context, state State, req *SearchRequest) (*SearchResponse, error)
+	Whoami(ctx context.Context, state State) (string, error)
 }
 
 type debugBackend struct{}
 
-// DebugBackend is an implementation of a server backend that prints out requests
+// DebugBackend is an implementation of a server backend that prints out requests.
 var DebugBackend Backend = debugBackend{}
 
 func (debugBackend) Add(ctx context.Context, state State, req *AddRequest) (*AddResponse, error) {
@@ -60,7 +60,7 @@ func (debugBackend) Delete(ctx context.Context, state State, req *DeleteRequest)
 
 func (debugBackend) ExtendedRequest(ctx context.Context, state State, req *ExtendedRequest) (*ExtendedResponse, error) {
 	fmt.Printf("EXTENDED %+v\n", req)
-	return nil, ProtocolError("unsupported extended request")
+	return nil, &ProtocolError{Reason: "unsupported extended request"}
 }
 
 func (debugBackend) Modify(ctx context.Context, state State, req *ModifyRequest) (*ModifyResponse, error) {
@@ -93,12 +93,12 @@ func (debugBackend) Search(ctx context.Context, state State, req *SearchRequest)
 			Message:   "",
 		},
 		Results: []*SearchResult{
-			&SearchResult{
+			{
 				DN: "cn=admin,dc=example,dc=com",
 				Attributes: map[string][][]byte{
-					"objectClass": [][]byte{[]byte("person")},
-					"cn":          [][]byte{[]byte("admin")},
-					"uid":         [][]byte{[]byte("123")},
+					"objectClass": {[]byte("person")},
+					"cn":          {[]byte("admin")},
+					"uid":         {[]byte("123")},
 				},
 			},
 		},

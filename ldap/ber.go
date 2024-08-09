@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const maxPacketSize = 32 << 20 // 32 MB
@@ -126,10 +128,23 @@ func ReadPacket(rd io.Reader) (*Packet, int, error) {
 	if n, err := io.ReadFull(rd, buf[:2]); err != nil {
 		return nil, n, err
 	}
+	if cn, ok := rd.(interface {
+		SetReadDeadline(t time.Time) error
+	}); ok {
+		// Give 5 seconds to read entire body after first bytes.
+		if err := cn.SetReadDeadline(time.Now().Add(time.Second * 5)); err != nil {
+			log.Printf("Failed to set read deadline: %s", err)
+		}
+		defer func() {
+			if err := cn.SetReadDeadline(time.Time{}); err != nil {
+				log.Printf("Failed to clear read deadline: %s", err)
+			}
+		}()
+	}
 	hdr := 2
 	dataLen := int(buf[1])
 	if dataLen&0x80 != 0 {
-		nl := int(dataLen & 0x7f)
+		nl := dataLen & 0x7f
 		if nl == 0 {
 			return nil, 2, InvalidBEREncodingError("ldap: indefinite form for length not supported")
 		} else if nl > 8 {
@@ -170,7 +185,7 @@ func ParsePacket(buf []byte) (*Packet, int, error) {
 	hdr := 2
 	dataLen := int(buf[1])
 	if dataLen&0x80 != 0 {
-		n := int(dataLen & 0x7f)
+		n := dataLen & 0x7f
 		if n == 0 {
 			return nil, hdr, InvalidBEREncodingError("ldap: indefinite form for length not supported")
 		} else if n > 8 {
@@ -259,7 +274,7 @@ func (p *Packet) Str() (string, bool) {
 	return "", false
 }
 
-// TODO: handle negatives properly
+// TODO: handle negatives properly.
 func intSize(v int64) int {
 	n := 0
 	for x := uint64(v); x != 0; x >>= 8 {
@@ -271,7 +286,7 @@ func intSize(v int64) int {
 	return n
 }
 
-// Size returns data size, total size with headers, and an error for unknown types
+// Size returns data size, total size with headers, and an error for unknown types.
 func (p *Packet) Size() (int, int, error) {
 	var size int
 	if p.Primitive {
@@ -334,7 +349,7 @@ func (p *Packet) write(w io.Writer, b []byte) error {
 		pri = 0
 	}
 	hdr := 2
-	b[0] = byte(byte(p.Class)<<6 | pri | byte(p.Tag)&0x1f)
+	b[0] = byte(p.Class)<<6 | pri | byte(p.Tag)&0x1f
 	if sz < 128 {
 		b[1] = byte(sz)
 	} else {
@@ -345,7 +360,7 @@ func (p *Packet) write(w io.Writer, b []byte) error {
 		hdr += n
 		b[1] = 0x80 | byte(n)
 		s := uint((n - 1) * 8)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			b[i+2] = byte(sz >> s & 0xff)
 			s -= 8
 		}
@@ -377,7 +392,7 @@ func (p *Packet) write(w io.Writer, b []byte) error {
 					n++
 				}
 				s := uint((n - 1) * 8)
-				for i := 0; i < n; i++ {
+				for i := range n {
 					b[i] = byte(v >> s & 0xff)
 					s -= 8
 				}
@@ -485,7 +500,7 @@ func parseValue(tag int, data []byte) (interface{}, error) {
 			runes[i] = rune(c)
 		}
 		return string(runes), nil
-	case TagUTF8String: //, TagOctetString:
+	case TagUTF8String: // TODO: also TagOctetString?
 		return string(data), nil
 	}
 }

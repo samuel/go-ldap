@@ -178,20 +178,20 @@ type Substrings struct {
 	Any       []string
 }
 
-func (f *Substrings) Encode() (*Packet, error) {
+func (s *Substrings) Encode() (*Packet, error) {
 	pkt := NewPacket(ClassContext, false, filterTagSubstrings, nil)
-	pkt.AddItem(NewPacket(ClassUniversal, true, TagOctetString, f.Attribute))
+	pkt.AddItem(NewPacket(ClassUniversal, true, TagOctetString, s.Attribute))
 	p := pkt.AddItem(NewPacket(ClassUniversal, false, TagSequence, nil))
-	if f.Initial != "" {
-		p.AddItem(NewPacket(ClassContext, true, 0, f.Initial))
+	if s.Initial != "" {
+		p.AddItem(NewPacket(ClassContext, true, 0, s.Initial))
 	}
-	for _, a := range f.Any {
+	for _, a := range s.Any {
 		if a != "" {
 			p.AddItem(NewPacket(ClassContext, true, 1, a))
 		}
 	}
-	if f.Final != "" {
-		p.AddItem(NewPacket(ClassContext, true, 2, f.Final))
+	if s.Final != "" {
+		p.AddItem(NewPacket(ClassContext, true, 2, s.Final))
 	}
 	return pkt, nil
 }
@@ -359,12 +359,13 @@ func parseFilter(tok *tokenizer, checkClose bool) (Filter, error) {
 		}
 		nameS := string(name)
 		valueS := string(value)
-		if valueS == "*" {
+		switch {
+		case valueS == "*":
 			if op != "=" {
 				return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "* value for non = op"}
 			}
 			filter = &Present{Attribute: nameS}
-		} else if hasStar {
+		case hasStar:
 			if op != "=" {
 				return nil, &ErrFilterSyntaxError{Pos: tok.cpos, Msg: "non equality substring match not allowed"}
 			}
@@ -376,7 +377,7 @@ func parseFilter(tok *tokenizer, checkClose bool) (Filter, error) {
 				Final:     parts[len(parts)-1],
 				Any:       parts[1 : len(parts)-1],
 			}
-		} else {
+		default:
 			switch op {
 			case "=":
 				filter = &EqualityMatch{Attribute: nameS, Value: []byte(valueS)}
@@ -429,44 +430,44 @@ func parseSearchFilter(pkt *Packet) (Filter, error) {
 		var ok bool
 		f := &EqualityMatch{}
 		if f.Attribute, ok = pkt.Items[0].Str(); !ok {
-			return nil, ProtocolError("failed to parse equalityMatch.attribute in filter")
+			return nil, &ProtocolError{Reason: "failed to parse equalityMatch.attribute in filter"}
 		}
 		if f.Value, ok = pkt.Items[1].Bytes(); !ok {
-			return nil, ProtocolError("failed to parse equalityMatch.value in filter")
+			return nil, &ProtocolError{Reason: "failed to parse equalityMatch.value in filter"}
 		}
 		return f, nil
 	case filterTagSubstrings:
 		var ok bool
 		q := &Substrings{}
 		if q.Attribute, ok = pkt.Items[0].Str(); !ok {
-			return nil, ProtocolError("failed to parse substrings.attribute in filter")
+			return nil, &ProtocolError{Reason: "failed to parse substrings.attribute in filter"}
 		}
 		for i, c := range pkt.Items[1].Items {
 			switch c.Tag {
 			case 0: // initial
 				if i != 0 {
-					return nil, ProtocolError("search filter substrings has final as non-first child")
+					return nil, &ProtocolError{Reason: "search filter substrings has final as non-first child"}
 				}
 				var ok bool
 				if q.Initial, ok = c.Str(); !ok {
-					return nil, ProtocolError("failed to parse initial in search filter")
+					return nil, &ProtocolError{Reason: "failed to parse initial in search filter"}
 				}
 			case 1: // Any
 				s, ok := c.Str()
 				if !ok {
-					return nil, ProtocolError("failed to parse any in search filter")
+					return nil, &ProtocolError{Reason: "failed to parse any in search filter"}
 				}
 				q.Any = append(q.Any, s)
 			case 2: // Final
 				if i != len(pkt.Items[1].Items)-1 {
-					return nil, ProtocolError("search filter substrings has final as non-last child")
+					return nil, &ProtocolError{Reason: "search filter substrings has final as non-last child"}
 				}
 				var ok bool
 				if q.Final, ok = c.Str(); !ok {
-					return nil, ProtocolError("failed to parse final in search filter")
+					return nil, &ProtocolError{Reason: "failed to parse final in search filter"}
 				}
 			default:
-				return nil, ProtocolError(fmt.Sprintf("unknown filter substring type %d", c.Tag))
+				return nil, &ProtocolError{Reason: fmt.Sprintf("unknown filter substring type %d", c.Tag)}
 			}
 		}
 		return q, nil
@@ -474,26 +475,26 @@ func parseSearchFilter(pkt *Packet) (Filter, error) {
 		var ok bool
 		f := &GreaterOrEqual{}
 		if f.Attribute, ok = pkt.Items[0].Str(); !ok {
-			return nil, ProtocolError("failed to parse greaterOrEqual.attribute in filter")
+			return nil, &ProtocolError{Reason: "failed to parse greaterOrEqual.attribute in filter"}
 		}
 		if f.Value, ok = pkt.Items[1].Bytes(); !ok {
-			return nil, ProtocolError("failed to parse greaterOrEqual.value in filter")
+			return nil, &ProtocolError{Reason: "failed to parse greaterOrEqual.value in filter"}
 		}
 		return f, nil
 	case filterTagLessOrEqual:
 		var ok bool
 		f := &LessOrEqual{}
 		if f.Attribute, ok = pkt.Items[0].Str(); !ok {
-			return nil, ProtocolError("failed to parse lessOrEqual.attribute in filter")
+			return nil, &ProtocolError{Reason: "failed to parse lessOrEqual.attribute in filter"}
 		}
 		if f.Value, ok = pkt.Items[1].Bytes(); !ok {
-			return nil, ProtocolError("failed to parse lessOrEqual.value in filter")
+			return nil, &ProtocolError{Reason: "failed to parse lessOrEqual.value in filter"}
 		}
 		return f, nil
 	case filterTagPresent:
 		attr, ok := pkt.Str()
 		if !ok {
-			return nil, ProtocolError("failed to parse present in search filter")
+			return nil, &ProtocolError{Reason: "failed to parse present in search filter"}
 		}
 		return &Present{
 			Attribute: attr,
@@ -502,14 +503,14 @@ func parseSearchFilter(pkt *Packet) (Filter, error) {
 		var ok bool
 		f := &ApproxMatch{}
 		if f.Attribute, ok = pkt.Items[0].Str(); !ok {
-			return nil, ProtocolError("failed to parse approxMatch.attribute in filter")
+			return nil, &ProtocolError{Reason: "failed to parse approxMatch.attribute in filter"}
 		}
 		if f.Value, ok = pkt.Items[1].Bytes(); !ok {
-			return nil, ProtocolError("failed to parse approxMatch.value in filter")
+			return nil, &ProtocolError{Reason: "failed to parse approxMatch.value in filter"}
 		}
 		return f, nil
 	case filterTagExtensibleMatch:
 		// TODO
 	}
-	return nil, ProtocolError(fmt.Sprintf("unknown filter tag %d", pkt.Tag))
+	return nil, &ProtocolError{Reason: fmt.Sprintf("unknown filter tag %d", pkt.Tag)}
 }

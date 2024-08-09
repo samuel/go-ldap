@@ -35,18 +35,18 @@ const (
 )
 
 var RootDSE = map[string][]string{
-	"supportedLDAPVersion": []string{
+	"supportedLDAPVersion": {
 		"3",
 	},
-	"supportedFeatures": []string{
+	"supportedFeatures": {
 		OIDModifyIncrement,
 		OIDAllOperationalAttributes,
 	},
-	"supportedExtension": []string{
+	"supportedExtension": {
 		OIDWhoAmI,
 		OIDPasswordModify,
 	},
-	"supportedSASLMechanisms": []string{},
+	"supportedSASLMechanisms": {},
 }
 
 const (
@@ -189,14 +189,18 @@ func (c ResultCode) String() string {
 	return s
 }
 
-type UnsupportedRequestTagError int
-
-func (e UnsupportedRequestTagError) Error() string {
-	return fmt.Sprintf("ldap: unsupported request tag %d", int(e))
+type UnsupportedRequestTagError struct {
+	Tag int
 }
 
-type ProtocolError string
+func (e *UnsupportedRequestTagError) Error() string {
+	return fmt.Sprintf("ldap: unsupported request tag %d", e.Tag)
+}
 
-func (e ProtocolError) Error() string {
-	return fmt.Sprintf("ldap: protocol error: %s", string(e))
+type ProtocolError struct {
+	Reason string
+}
+
+func (e *ProtocolError) Error() string {
+	return "ldap: protocol error: " + e.Reason
 }
